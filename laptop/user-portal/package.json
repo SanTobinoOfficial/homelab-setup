@@ -1,0 +1,12 @@
+{
+  "name": "homelab-user-portal",
+  "version": "1.0.0",
+  "description": "HomeLab captive portal — role-based user console",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

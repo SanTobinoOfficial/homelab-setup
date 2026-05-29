@@ -102,6 +102,11 @@ chmod +x /opt/homelab/backup.sh
 # Discord bot
 mkdir -p /opt/homelab/discord-bot
 cp -r "$REPO_ROOT/discord-bot/." /opt/homelab/discord-bot/
+
+# User portal
+mkdir -p /opt/homelab/user-portal
+cp -r "$SCRIPT_DIR/user-portal/." /opt/homelab/user-portal/
+mkdir -p /mnt/ssd/portal
 ok "Files copied to /opt/homelab/"
 
 # ── 6. Generate .env ─────────────────────────────────────────

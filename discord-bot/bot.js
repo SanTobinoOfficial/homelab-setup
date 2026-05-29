@@ -254,6 +254,43 @@ const commands = {
     }
   },
 
+  async devices(msg) {
+    if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
+    try {
+      const fetch = (await import("node-fetch")).default;
+      const res = await fetch("http://localhost:8888/api/devices", {
+        headers: { "X-API-Key": AGENT_API_KEY },
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json();
+      const list = (data.devices || []);
+      if (list.length === 0) return msg.reply("Brak zarejestrowanych urządzeń.");
+      const roleEmoji = { admin: "👑", user: "👤", guest: "👥" };
+      const text = list.map(d =>
+        `${roleEmoji[d.role] || "❓"} **${d.name}** \`${d.mac}\` — \`${d.role}\``
+      ).join("\n");
+      await msg.reply(`**📱 Urządzenia w portalu:**\n${text}`);
+    } catch (e) {
+      await msg.reply(`❌ ${e.message}`);
+    }
+  },
+
+  async assign(msg, args) {
+    if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
+    const [mac, role, ...nameParts] = args;
+    if (!mac || !role) return msg.reply("Użycie: `!assign <mac> <admin|user|guest> [nazwa]`");
+    if (!["admin","user","guest"].includes(role)) return msg.reply("❌ Rola musi być: admin, user lub guest");
+    const name = nameParts.join(" ") || "Unnamed";
+    try {
+      const r = await execFileAsync("python3", [
+        "/opt/homelab/user-portal/watcher.py", "assign", mac, role, name
+      ], { timeout: 5000 });
+      await msg.reply(`✅ Przypisano: \`${mac}\` → **${role}** (${name})`);
+    } catch (e) {
+      await msg.reply(`❌ ${e.message}`);
+    }
+  },
+
   async help(msg) {
     const embed = new EmbedBuilder()
       .setColor(0x6366f1)
@@ -271,6 +308,11 @@ const commands = {
           "`!stop <usługa>` — zatrzymaj kontener",
           "`!logs <usługa> [linie]` — logi kontenera",
           "`!run <komenda>` — wykonaj komendę bash",
+        ].join("\n"), inline: false },
+        { name: "📱 User Portal", value: [
+          "`!devices` — lista urządzeń z przypisanymi rolami",
+          "`!assign <mac> <rola> [nazwa]` — przypisz rolę urządzeniu",
+          "Przykład: `!assign aa:bb:cc:dd:ee:ff user Telefon Marka`",
         ].join("\n"), inline: false },
         { name: "🤖 Claude Code (admin)", value: [
           "`!claude <prompt>` — wyślij prompt do Claude Code CLI",

@@ -137,6 +137,43 @@ services:
       - homelab
 
   # ─────────────────────────────────────
+  # USER PORTAL — captive portal, role-based console
+  # ─────────────────────────────────────
+  user-portal:
+    image: node:20-slim
+    container_name: homelab-user-portal
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /opt/homelab/user-portal:/app
+      - /mnt/ssd/portal:/mnt/ssd/portal
+    command: sh -c "npm install --omit=dev && node server.js"
+    environment:
+      AGENT_API_KEY: ${AGENT_API_KEY}
+      LAPTOP_IP: ${LAPTOP_IP:-192.168.1.100}
+    ports:
+      - "8888:8888"
+    network_mode: host  # potrzebny do odczytu ARP (ip neigh) i iptables
+
+  # ─────────────────────────────────────
+  # NETWORK WATCHER — captive portal trigger
+  # ─────────────────────────────────────
+  network-watcher:
+    image: python:3.11-slim
+    container_name: homelab-network-watcher
+    restart: unless-stopped
+    volumes:
+      - /opt/homelab/user-portal:/app
+      - /mnt/ssd/portal:/mnt/ssd/portal
+    working_dir: /app
+    command: ["python", "-u", "watcher.py"]
+    environment:
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    network_mode: host  # potrzebny do ARP i iptables
+    cap_add:
+      - NET_ADMIN  # do iptables redirect
+
+  # ─────────────────────────────────────
   # DISCORD BOT — kontrola przez Discord
   # ─────────────────────────────────────
   discord-bot:

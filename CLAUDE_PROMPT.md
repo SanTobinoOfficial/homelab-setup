@@ -432,7 +432,131 @@ Gdy napiszesz na Discordzie `!claude sprawdź czy nextcloud działa i napraw pro
 
 ---
 
-## KROK 15 — WERYFIKACJA KOŃCOWA
+## KROK 15 — USER PORTAL (konsola użytkownika / captive portal)
+
+Gdy ktoś połączy się z WiFi, automatycznie zostaje przekierowany na stronę portalu
+dopasowaną do jego roli przypisanej po adresie MAC urządzenia.
+
+### Jak działa system
+
+```
+Nowe urządzenie łączy się z WiFi
+         ↓
+network-watcher wykrywa nieznany MAC w tablicy ARP
+         ↓
+iptables przekierowuje ruch HTTP (port 80) → portal (port 8888)
+         ↓
+Przeglądarka otwiera portal → urządzenie nie ma roli → formularz rejestracji gościa
+         ↓ (admin przypisuje rolę przez /admin lub Discorda)
+Przy następnym połączeniu → portal pokazuje dashboard zgodny z rolą
+         ↓
+iptables redirect jest usuwany → urządzenie ma normalny dostęp
+```
+
+**Role:**
+| Rola | Co widzi |
+|------|----------|
+| `admin` | Wszystkie usługi + Admin Dashboard na PC + Portainer |
+| `user` | Nextcloud (własne pliki) + Jellyfin |
+| `guest` | Tylko Jellyfin (podgląd) |
+
+### 15a. Skopiuj pliki portalu
+
+```bash
+mkdir -p /opt/homelab/user-portal
+cp -r ~/homelab-setup/laptop/user-portal/. /opt/homelab/user-portal/
+mkdir -p /mnt/ssd/portal
+```
+
+### 15b. Włącz IP forwarding i iptables (wymagane dla captive portal)
+
+```bash
+# Włącz forwarding
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Zainstaluj iptables jeśli brak
+sudo apt-get install -y iptables iptables-persistent
+
+# Włącz NAT na interfejsie WiFi/sieciowym
+IFACE=$(ip route | grep default | awk '{print $5}')
+echo "Interfejs: $IFACE"
+
+sudo iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+
+# Zapisz reguły żeby przetrwały restart
+sudo netfilter-persistent save
+```
+
+### 15c. Ustaw AdGuard Home jako DNS (żeby portal.home działał)
+
+Po uruchomieniu AdGuard Home (http://192.168.1.100:3001):
+1. **Filters → DNS rewrites → Add DNS rewrite**
+2. Dodaj: `portal.home` → `192.168.1.100`
+3. Dodaj: `homelab.local` → `192.168.1.100`
+
+Teraz każde urządzenie używające AdGuard jako DNS może wejść na `http://portal.home:8888`
+
+### 15d. Skonfiguruj router — captive portal redirect
+
+W panelu routera (zwykle 192.168.1.1):
+- **DHCP → Primary DNS:** ustaw na `192.168.1.100` (AdGuard)
+- Jeśli router ma **Captive Portal / Guest WiFi Portal:** ustaw URL na `http://192.168.1.100:8888`
+
+Bez zmiany DNS w routerze — captive portal nadal działa przez iptables redirect.
+
+### 15e. Uruchom portal i watcher
+
+```bash
+cd /opt/homelab
+docker compose up -d user-portal network-watcher
+docker compose logs user-portal --tail=20
+docker compose logs network-watcher --tail=20
+```
+
+### 15f. Zarejestruj swoje urządzenie jako admin
+
+Znajdź swój MAC adres:
+```bash
+# Na telefonie: Ustawienia → WiFi → Twoja sieć → MAC adres
+# Na PC: ipconfig /all (Windows) lub ip link (Linux)
+```
+
+Dodaj siebie jako admin przez terminal laptopa:
+```bash
+# Przez watcher.py:
+python3 /opt/homelab/user-portal/watcher.py assign AA:BB:CC:DD:EE:FF admin "Telefon Tobiasza"
+
+# Lub przez panel admina w przeglądarce:
+# http://192.168.1.100:8888/admin
+# (dostępne tylko jeśli twoje urządzenie ma rolę admin)
+```
+
+### 15g. Zarządzanie urządzeniami przez Discord
+
+Discord bot automatycznie powiadamia o nowych urządzeniach:
+```
+🆕 Nowe urządzenie w sieci
+IP: 192.168.1.45
+MAC: ab:cd:ef:12:34:56
+```
+
+Przypisz rolę przez Discord:
+```
+!run python3 /opt/homelab/user-portal/watcher.py assign ab:cd:ef:12:34:56 user "Telefon Marka"
+```
+
+### Adresy portalu
+
+| URL | Opis |
+|-----|------|
+| `http://192.168.1.100:8888` | Portal (dostęp przez IP) |
+| `http://portal.home:8888` | Portal (po skonfigurowaniu DNS) |
+| `http://192.168.1.100:8888/admin` | Panel zarządzania urządzeniami (tylko admin) |
+
+---
+
+## KROK 17 — WERYFIKACJA KOŃCOWA
 
 ```bash
 echo "=== STATUS KOŃCOWY ==="
