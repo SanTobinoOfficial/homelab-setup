@@ -135,3 +135,31 @@ services:
       AGENT_API_KEY: ${AGENT_API_KEY}
     networks:
       - homelab
+
+  # ─────────────────────────────────────
+  # DISCORD BOT — kontrola przez Discord
+  # ─────────────────────────────────────
+  discord-bot:
+    image: node:20-slim
+    container_name: homelab-discord-bot
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /opt/homelab/discord-bot:/app
+      # Montuj claude CLI z hosta jeśli zainstalowany (dla komendy !claude)
+      - /usr/local/bin/claude:/usr/local/bin/claude:ro
+      - /root/.claude:/root/.claude:ro
+    command: sh -c "npm install --omit=dev && node bot.js"
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      ALLOWED_CHANNEL_ID: ${ALLOWED_CHANNEL_ID}
+      ADMIN_USER_ID: ${ADMIN_USER_ID}
+      # Agent URL przez wewnętrzną sieć Docker
+      AGENT_URL: http://node-agent:9090
+      AGENT_API_KEY: ${AGENT_API_KEY}
+      CLAUDE_CLI: claude
+      CLAUDE_TIMEOUT: "120"
+    depends_on:
+      - node-agent
+    networks:
+      - homelab

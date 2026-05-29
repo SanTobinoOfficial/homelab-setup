@@ -331,63 +331,81 @@ echo "Backup cron: OK (codziennie 02:00)"
 
 ---
 
-## KROK 14 — DISCORD BOT (opcjonalnie ale zalecane)
+## KROK 14 — DISCORD BOT (hostowany na laptopie w Docker)
 
-Discord bot pozwala kontrolować ten serwer i Claude Code przez Discord z telefonu lub PC.
+Bot Discord działa jako kontener Docker na tym laptopie — startuje razem z resztą stacku i restartuje się automatycznie.
+Pozwala kontrolować serwer i wysyłać prompty do Claude Code CLI **z Discorda, z telefonu lub PC**.
 
-### Instalacja Node.js (jeśli brak)
+### 14a. Skopiuj pliki bota
 
 ```bash
-node --version 2>/dev/null || {
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt-get install -y nodejs
-}
-node --version
+mkdir -p /opt/homelab/discord-bot
+cp -r ~/homelab-setup/discord-bot/. /opt/homelab/discord-bot/
+ls /opt/homelab/discord-bot/
 ```
 
-### Setup bota
+### 14b. Uzupełnij dane Discord w /opt/homelab/.env
+
+Potrzebujesz 3 wartości z Discorda. Otwórz panel i je zdobądź, potem uruchom:
 
 ```bash
-cd ~/homelab-setup/discord-bot
-npm install
-
-# Skopiuj i edytuj .env
-cp .env.example .env
-nano .env
+nano /opt/homelab/.env
 ```
 
-W pliku `.env` uzupełnij:
-- `DISCORD_TOKEN` — token bota z Discord Developer Portal (discordapp.com/developers/applications)
-- `ALLOWED_CHANNEL_ID` — ID kanału Discord (prawy klik na kanał → Kopiuj ID)
-- `ADMIN_USER_ID` — Twoje ID na Discord (prawy klik na siebie → Kopiuj ID)
-- `AGENT_API_KEY` — klucz z `/opt/homelab/.env`
+Dodaj na końcu pliku (lub uzupełnij istniejące linie):
 
-### Systemd service dla bota
+```
+DISCORD_TOKEN=TWOJ_TOKEN_BOTA
+ALLOWED_CHANNEL_ID=ID_KANALU
+ADMIN_USER_ID=TWOJE_DISCORD_ID
+```
+
+**Jak zdobyć wartości:**
+- `DISCORD_TOKEN` → discordapp.com/developers/applications → New Application → Bot → Reset Token
+- `ALLOWED_CHANNEL_ID` → Discord: Ustawienia → Zaawansowane → Tryb dewelopera ON → prawy klik kanał → Kopiuj ID
+- `ADMIN_USER_ID` → prawy klik na siebie w Discordzie → Kopiuj ID
+
+**Uprawnienia bota na Discordzie:**
+W panelu Developer Portal → Bot → zaznacz:
+- `Message Content Intent` (wymagane!)
+- `Server Members Intent`
+
+Zaproś bota na swój serwer:
+`https://discord.com/oauth2/authorize?client_id=TWOJE_APPLICATION_ID&scope=bot&permissions=274877991936`
+(zastąp `TWOJE_APPLICATION_ID` swoim Application ID z panelu)
+
+### 14c. Uruchom bota (jako część Docker stack)
+
+Bot jest już zdefiniowany w docker-compose.yml jako usługa `discord-bot`.
+Wystarczy:
 
 ```bash
-cat > /tmp/homelab-bot.service <<EOF
-[Unit]
-Description=HomeLab Discord Bot
-After=network-online.target
-Wants=network-online.target
+cd /opt/homelab
+docker compose up -d discord-bot
+docker compose logs discord-bot --tail=30
+```
 
-[Service]
-Type=simple
-WorkingDirectory=/root/homelab-setup/discord-bot
-ExecStart=/usr/bin/node bot.js
-Restart=always
-RestartSec=10
-User=$USER
+Jeśli zobaczysz `HomeLab Discord Bot` i `Logged in as: NazwaBota#1234` — działa.
 
-[Install]
-WantedBy=multi-user.target
-EOF
+### 14d. Sprawdź czy claude CLI jest dostępny dla bota
 
-sudo mv /tmp/homelab-bot.service /etc/systemd/system/homelab-bot.service
-sudo systemctl daemon-reload
-sudo systemctl enable homelab-bot
-sudo systemctl start homelab-bot
-sudo systemctl status homelab-bot
+Bot montuje `/usr/local/bin/claude` z hosta. Sprawdź czy claude jest zainstalowany:
+
+```bash
+which claude || echo "Claude CLI: nie zainstalowany"
+claude --version 2>/dev/null || echo "Zainstaluj: npm install -g @anthropic-ai/claude-code"
+```
+
+Jeśli nie ma — zainstaluj:
+```bash
+npm install -g @anthropic-ai/claude-code
+# Zaloguj się:
+claude auth login
+```
+
+Następnie zrestartuj bota żeby załadował nową ścieżkę:
+```bash
+docker compose restart discord-bot
 ```
 
 ### Dostępne komendy Discord
@@ -401,16 +419,16 @@ sudo systemctl status homelab-bot
 | `!restart <usługa>` | Restart kontenera |
 | `!stop <usługa>` | Zatrzymanie kontenera |
 | `!logs <usługa> [n]` | Ostatnie N linii logów |
-| `!run <komenda>` | Wykonaj komendę bash |
+| `!run <komenda>` | Wykonaj komendę bash na laptopie |
 | `!claude <prompt>` | **Wyślij prompt do Claude Code CLI!** |
 | `!help` | Lista komend |
 
 ### Jak działa `!claude`
 
-Gdy napiszesz `!claude sprawdź czy nextcloud działa i napraw problemy`, bot:
-1. Uruchamia `claude --print "sprawdź czy nextcloud działa..."` na laptopie
-2. Claude Code wykonuje diagnostykę i ewentualne naprawy
-3. Bot odsyła odpowiedź na Discord
+Gdy napiszesz na Discordzie `!claude sprawdź czy nextcloud działa i napraw problemy`, bot:
+1. Uruchamia `claude --print "sprawdź czy nextcloud działa..."` wewnątrz kontenera
+2. Claude Code (zamontowany z hosta) wykonuje diagnostykę
+3. Bot odsyła odpowiedź na Discord (do 2000 znaków, dłuższe odpowiedzi dzielone na części)
 
 ---
 

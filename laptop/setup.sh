@@ -98,6 +98,10 @@ cp "$SCRIPT_DIR/docker-compose.yml" /opt/homelab/
 cp -r "$SCRIPT_DIR/agent/"* /mnt/ssd/agent/
 cp "$SCRIPT_DIR/backup.sh" /opt/homelab/
 chmod +x /opt/homelab/backup.sh
+
+# Discord bot
+mkdir -p /opt/homelab/discord-bot
+cp -r "$REPO_ROOT/discord-bot/." /opt/homelab/discord-bot/
 ok "Files copied to /opt/homelab/"
 
 # ── 6. Generate .env ─────────────────────────────────────────
