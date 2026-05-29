@@ -1,0 +1,513 @@
+# HOMELAB SERVER NODE — CLAUDE CODE MAIN PROMPT
+# Laptop ASUS — Pełna instrukcja konfiguracji
+# Wersja: 1.0 | Admin PC: DESKTOP-PC-TOBI (192.168.1.212, Windows 11)
+
+---
+
+## TWOJA ROLA
+
+Jesteś Claude Code uruchomionym na **LAPTOPIE ASUS** — jest to **SERVER NODE** w systemie homelab.
+
+Twoje zadanie: skonfigurować ten laptop od zera jako kompletny serwer działający 24/7.
+Admin PC (DESKTOP-PC-TOBI, 192.168.1.212) będzie zarządzać tym laptopem przez SSH i REST API.
+
+**NIE pytaj o pozwolenie przy każdym kroku.** Wykonuj kolejne kroki automatycznie.
+**Przy błędzie** — opisz problem, zaproponuj rozwiązanie, i kontynuuj jeśli możesz.
+
+---
+
+## KROK 1 — ANALIZA SYSTEMU
+
+Uruchom poniższe komendy i pokaż mi wyniki WSZYSTKICH:
+
+```bash
+uname -a
+lsb_release -a 2>/dev/null || cat /etc/os-release
+whoami
+hostname -I
+free -h
+df -h
+lsblk -f
+cat /proc/cpuinfo | grep "model name" | head -1
+nproc
+docker --version 2>/dev/null || echo "Docker: NIE ZAINSTALOWANY"
+python3 --version 2>/dev/null || echo "Python3: NIE ZAINSTALOWANY"
+git --version 2>/dev/null || echo "Git: NIE ZAINSTALOWANY"
+systemctl is-active ssh 2>/dev/null || echo "SSH: nieznany status"
+```
+
+Na podstawie wyników dostosuj kolejne kroki do rzeczywistego systemu.
+**Jeśli OS nie jest Ubuntu/Debian — powiedz mi, a dopasuję instrukcje.**
+
+---
+
+## KROK 2 — AKTUALIZACJA SYSTEMU
+
+```bash
+sudo apt-get update && sudo apt-get upgrade -y
+sudo apt-get install -y curl wget git nano htop lsof net-tools openssh-server rsync openssl cron
+```
+
+Upewnij się że SSH działa:
+```bash
+sudo systemctl enable ssh
+sudo systemctl start ssh
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+echo "SSH OK — IP: $(hostname -I | awk '{print $1}')"
+```
+
+---
+
+## KROK 3 — DOCKER
+
+Jeśli Docker nie jest zainstalowany:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"
+sudo systemctl enable docker
+sudo systemctl start docker
+sudo apt-get install -y docker-compose-plugin
+newgrp docker
+```
+
+Weryfikacja:
+```bash
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+---
+
+## KROK 4 — EXTERNAL SSD
+
+### 4a. Identyfikacja dysku
+
+```bash
+lsblk -f
+fdisk -l 2>/dev/null | grep -E "^Disk /dev"
+```
+
+Szukaj dysku ~1TB (zewnętrzny SSD). Typowe nazwy: `/dev/sdb`, `/dev/sdc`, `/dev/sda` (jeśli laptopowy dysk to nvme).
+
+### 4b. Formatowanie (tylko jeśli SSD jest pusty lub akceptujesz utratę danych)
+
+**ZAPYTAJ MNIE PRZED WYKONANIEM jeśli nie jesteś pewny który dysk to SSD.**
+
+```bash
+# Zamień sdX na właściwy dysk:
+sudo mkfs.ext4 -L homelab-ssd /dev/sdX1
+```
+
+Jeśli SSD ma już partycję ext4 — pomiń formatowanie.
+
+### 4c. Montowanie na stałe
+
+```bash
+sudo mkdir -p /mnt/ssd
+
+# Pobierz UUID dysku
+SSD_UUID=$(sudo blkid /dev/sdX1 -s UUID -o value)
+echo "UUID: $SSD_UUID"
+
+# Dodaj do fstab
+echo "UUID=$SSD_UUID /mnt/ssd ext4 defaults,nofail,x-systemd.device-timeout=30 0 2" | sudo tee -a /etc/fstab
+
+# Zamontuj
+sudo mount -a
+df -h /mnt/ssd
+```
+
+---
+
+## KROK 5 — KLONOWANIE REPO
+
+```bash
+cd ~
+git clone https://github.com/SanTobinoOfficial/homelab-setup.git
+cd homelab-setup
+ls -la
+```
+
+---
+
+## KROK 6 — STRUKTURA FOLDERÓW
+
+```bash
+sudo mkdir -p /opt/homelab
+sudo chown "$USER:$USER" /opt/homelab
+
+mkdir -p /mnt/ssd/docker/nextcloud/{data,db}
+mkdir -p /mnt/ssd/docker/jellyfin/{config,cache}
+mkdir -p /mnt/ssd/docker/adguard/{work,conf}
+mkdir -p /mnt/ssd/docker/portainer/data
+mkdir -p /mnt/ssd/docker/traefik/logs
+mkdir -p /mnt/ssd/users/{admin,shared}
+mkdir -p /mnt/ssd/media/{movies,series,music,photos}
+mkdir -p /mnt/ssd/backups/{daily,weekly,config}
+mkdir -p /mnt/ssd/agent
+mkdir -p /mnt/ssd/logs
+
+chown -R "$USER:$USER" /mnt/ssd
+chmod -R 755 /mnt/ssd
+
+echo "Struktura folderów OK"
+ls -la /mnt/ssd/
+```
+
+---
+
+## KROK 7 — KOPIOWANIE PLIKÓW PROJEKTU
+
+```bash
+REPO=~/homelab-setup
+
+# Docker stack
+cp "$REPO/laptop/docker-compose.yml" /opt/homelab/
+
+# Node Agent
+cp "$REPO/laptop/agent/agent.py" /mnt/ssd/agent/
+
+# Backup script
+cp "$REPO/laptop/backup.sh" /opt/homelab/
+chmod +x /opt/homelab/backup.sh
+
+echo "Pliki skopiowane"
+ls /opt/homelab/
+ls /mnt/ssd/agent/
+```
+
+---
+
+## KROK 8 — GENEROWANIE KONFIGURACJI (.env)
+
+```bash
+DB_ROOT=$(openssl rand -hex 32)
+DB_PASS=$(openssl rand -hex 32)
+API_KEY=$(openssl rand -hex 64)
+
+echo "Podaj hasło administratora Nextcloud (lub wciśnij Enter dla losowego):"
+read -r NC_PASS
+[ -z "$NC_PASS" ] && NC_PASS="admin$(openssl rand -hex 8)"
+
+cat > /opt/homelab/.env <<EOF
+DB_ROOT_PASSWORD=$DB_ROOT
+DB_PASSWORD=$DB_PASS
+NEXTCLOUD_ADMIN_PASSWORD=$NC_PASS
+AGENT_API_KEY=$API_KEY
+EOF
+
+chmod 600 /opt/homelab/.env
+echo ""
+echo "=== ZAPISZ PONIŻSZE DANE ==="
+echo "Nextcloud admin hasło: $NC_PASS"
+echo "Agent API Key:         $API_KEY"
+echo "==========================="
+echo "Wklej API Key do: admin-dashboard/.env i discord-bot/.env na Admin PC"
+```
+
+---
+
+## KROK 9 — URUCHOMIENIE DOCKER STACK
+
+```bash
+cd /opt/homelab
+docker compose up -d
+
+# Poczekaj na start
+sleep 5
+docker compose ps
+```
+
+Jeśli któryś kontener nie wystartuje — sprawdź logi:
+```bash
+docker compose logs --tail=30 <nazwa_kontenera>
+```
+
+Typowe problemy:
+- **nextcloud** czeka na DB — normalnie, odczekaj 30s i sprawdź ponownie
+- **adguard** konflikt port 53 — `sudo systemctl stop systemd-resolved && sudo systemctl disable systemd-resolved`
+- **Port zajęty** — `ss -tlnp | grep <port>`
+
+---
+
+## KROK 10 — TEST NODE AGENT
+
+```bash
+# Zainstaluj curl jeśli brak
+which curl || sudo apt-get install -y curl
+
+# Pobierz API key
+API_KEY=$(grep AGENT_API_KEY /opt/homelab/.env | cut -d= -f2)
+
+# Poczekaj aż agent się uruchomi
+sleep 10
+
+# Test
+curl -s -H "X-API-Key: $API_KEY" http://localhost:9090/api/health | python3 -m json.tool
+curl -s -H "X-API-Key: $API_KEY" http://localhost:9090/api/metrics | python3 -m json.tool
+curl -s -H "X-API-Key: $API_KEY" http://localhost:9090/api/services | python3 -m json.tool
+```
+
+---
+
+## KROK 11 — STATYCZNY IP (przez router — ZALECANE)
+
+Najłatwiejsza metoda: zarezerwuj IP **192.168.1.100** dla MAC adresu tego laptopa w panelu routera.
+
+MAC adres:
+```bash
+ip link show | grep -A1 "state UP" | grep "link/ether" | awk '{print $2}'
+```
+
+Alternatywnie przez netplan (Ubuntu 20.04+):
+```bash
+INTERFACE=$(ip route | grep default | awk '{print $5}')
+echo "Interfejs: $INTERFACE"
+
+sudo tee /etc/netplan/99-homelab-static.yaml > /dev/null <<EOF
+network:
+  version: 2
+  ethernets:
+    $INTERFACE:
+      dhcp4: no
+      addresses: [192.168.1.100/24]
+      routes:
+        - to: default
+          via: 192.168.1.1
+      nameservers:
+        addresses: [8.8.8.8, 1.1.1.1]
+EOF
+
+sudo netplan try
+```
+
+**Jeśli nie jesteś pewny — użyj metody router (bezpieczniejsza), i tylko powiedz mi adres IP.**
+
+---
+
+## KROK 12 — SYSTEMD AUTOSTART
+
+```bash
+cat > /tmp/homelab.service <<EOF
+[Unit]
+Description=HomeLab Docker Stack
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/homelab
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+User=$USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo mv /tmp/homelab.service /etc/systemd/system/homelab.service
+sudo systemctl daemon-reload
+sudo systemctl enable homelab
+echo "Autostart skonfigurowany"
+```
+
+---
+
+## KROK 13 — CRON BACKUP
+
+```bash
+(crontab -l 2>/dev/null | grep -v backup.sh
+ echo "0 2 * * * /opt/homelab/backup.sh >> /mnt/ssd/logs/backup.log 2>&1"
+) | crontab -
+
+# Sprawdź
+crontab -l | grep backup
+echo "Backup cron: OK (codziennie 02:00)"
+```
+
+---
+
+## KROK 14 — DISCORD BOT (opcjonalnie ale zalecane)
+
+Discord bot pozwala kontrolować ten serwer i Claude Code przez Discord z telefonu lub PC.
+
+### Instalacja Node.js (jeśli brak)
+
+```bash
+node --version 2>/dev/null || {
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+}
+node --version
+```
+
+### Setup bota
+
+```bash
+cd ~/homelab-setup/discord-bot
+npm install
+
+# Skopiuj i edytuj .env
+cp .env.example .env
+nano .env
+```
+
+W pliku `.env` uzupełnij:
+- `DISCORD_TOKEN` — token bota z Discord Developer Portal (discordapp.com/developers/applications)
+- `ALLOWED_CHANNEL_ID` — ID kanału Discord (prawy klik na kanał → Kopiuj ID)
+- `ADMIN_USER_ID` — Twoje ID na Discord (prawy klik na siebie → Kopiuj ID)
+- `AGENT_API_KEY` — klucz z `/opt/homelab/.env`
+
+### Systemd service dla bota
+
+```bash
+cat > /tmp/homelab-bot.service <<EOF
+[Unit]
+Description=HomeLab Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/homelab-setup/discord-bot
+ExecStart=/usr/bin/node bot.js
+Restart=always
+RestartSec=10
+User=$USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo mv /tmp/homelab-bot.service /etc/systemd/system/homelab-bot.service
+sudo systemctl daemon-reload
+sudo systemctl enable homelab-bot
+sudo systemctl start homelab-bot
+sudo systemctl status homelab-bot
+```
+
+### Dostępne komendy Discord
+
+| Komenda | Opis |
+|---------|------|
+| `!status` | Pełny status serwera (embed) |
+| `!metrics` | CPU, RAM, temp, uptime |
+| `!services` | Lista kontenerów Docker |
+| `!storage` | Informacje o dysku |
+| `!restart <usługa>` | Restart kontenera |
+| `!stop <usługa>` | Zatrzymanie kontenera |
+| `!logs <usługa> [n]` | Ostatnie N linii logów |
+| `!run <komenda>` | Wykonaj komendę bash |
+| `!claude <prompt>` | **Wyślij prompt do Claude Code CLI!** |
+| `!help` | Lista komend |
+
+### Jak działa `!claude`
+
+Gdy napiszesz `!claude sprawdź czy nextcloud działa i napraw problemy`, bot:
+1. Uruchamia `claude --print "sprawdź czy nextcloud działa..."` na laptopie
+2. Claude Code wykonuje diagnostykę i ewentualne naprawy
+3. Bot odsyła odpowiedź na Discord
+
+---
+
+## KROK 15 — WERYFIKACJA KOŃCOWA
+
+```bash
+echo "=== STATUS KOŃCOWY ==="
+echo ""
+echo "--- Docker ---"
+docker compose -f /opt/homelab/docker-compose.yml ps
+echo ""
+echo "--- Node Agent ---"
+API_KEY=$(grep AGENT_API_KEY /opt/homelab/.env | cut -d= -f2)
+curl -s -H "X-API-Key: $API_KEY" http://localhost:9090/api/health
+echo ""
+echo "--- Porty ---"
+ss -tlnp | grep -E ':80|:8080|:8096|:3001|:9000|:9090|:22'
+echo ""
+echo "--- Dysk ---"
+df -h /mnt/ssd
+echo ""
+echo "--- Autostart ---"
+systemctl is-enabled homelab 2>/dev/null && echo "homelab: enabled" || echo "homelab: disabled"
+echo ""
+echo "=== DOSTĘP DO USŁUG ==="
+IP=$(hostname -I | awk '{print $1}')
+echo "Nextcloud:  http://$IP:8080"
+echo "Jellyfin:   http://$IP:8096"
+echo "AdGuard:    http://$IP:3001"
+echo "Portainer:  http://$IP:9000"
+echo "Traefik:    http://$IP:8090"
+echo "Node Agent: http://$IP:9090"
+echo ""
+echo "=== NA ADMIN PC (Windows) ==="
+echo "1. Przejdź do C:\\homelab-setup\\admin-dashboard\\"
+echo "2. Skopiuj .env.example → .env"
+echo "3. Ustaw LAPTOP_IP=$IP"
+echo "4. Ustaw AGENT_API_KEY=$(grep AGENT_API_KEY /opt/homelab/.env | cut -d= -f2 | head -c 16)..."
+echo "5. npm install && npm start"
+echo "6. Otwórz http://localhost:3000"
+```
+
+---
+
+## ROZWIĄZYWANIE PROBLEMÓW
+
+### Port 53 zajęty (AdGuard)
+```bash
+sudo systemctl stop systemd-resolved
+sudo systemctl disable systemd-resolved
+sudo rm /etc/resolv.conf
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+docker compose restart adguard
+```
+
+### Nextcloud nie startuje
+```bash
+docker compose logs nextcloud-db --tail=20
+docker compose logs nextcloud --tail=20
+# Odczekaj 60s po pierwszym uruchomieniu — DB musi się zainicjalizować
+```
+
+### Node Agent nie odpowiada
+```bash
+docker compose logs node-agent --tail=30
+# Sprawdź czy plik agent.py istnieje:
+ls /mnt/ssd/agent/
+# Ręczne uruchomienie testowe:
+docker compose restart node-agent
+```
+
+### SSD nie jest zamontowane
+```bash
+sudo mount -a
+journalctl -u systemd-fstab-generator --no-pager | tail -10
+```
+
+### Brak miejsca na dysku systemowym
+```bash
+df -h /
+docker system prune -f  # Usuń nieużywane obrazy/kontenery
+```
+
+---
+
+## PO ZAKOŃCZENIU POWIEDZ MI
+
+Kiedy wszystko będzie gotowe, podsumuj:
+1. IP serwera
+2. Które usługi działają (docker compose ps)
+3. Czy Node Agent odpowiada
+4. Agent API Key (pierwsze 16 znaków)
+5. Czy bot Discord działa
+
+Ja (na Admin PC) skonfiguruje dashboard i po wpisaniu API key będę miał pełną kontrolę.
+
+---
+
+*Repo: https://github.com/SanTobinoOfficial/homelab-setup*
+*Admin PC: DESKTOP-PC-TOBI | 192.168.1.212 | Windows 11 | Node.js v24*

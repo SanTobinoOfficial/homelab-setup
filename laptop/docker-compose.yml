@@ -1,0 +1,137 @@
+version: "3.9"
+
+networks:
+  homelab:
+    driver: bridge
+
+services:
+
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/logs/access.log"
+    ports:
+      - "80:80"
+      - "8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/ssd/docker/traefik/logs:/logs
+    networks:
+      - homelab
+
+  nextcloud-db:
+    image: mariadb:10.11
+    container_name: nextcloud-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - /mnt/ssd/docker/nextcloud/db:/var/lib/mysql
+    networks:
+      - homelab
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nextcloud:
+    image: nextcloud:28-apache
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      nextcloud-db:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: nextcloud-db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: "192.168.1.100 localhost nextcloud.local"
+      OVERWRITEPROTOCOL: http
+    volumes:
+      - /mnt/ssd/docker/nextcloud/data:/var/www/html
+      - /mnt/ssd/users:/var/www/html/data
+    ports:
+      - "8080:80"
+    networks:
+      - homelab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.local`)"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      JELLYFIN_PublishedServerUrl: http://192.168.1.100:8096
+    volumes:
+      - /mnt/ssd/docker/jellyfin/config:/config
+      - /mnt/ssd/docker/jellyfin/cache:/cache
+      - /mnt/ssd/media:/media:ro
+    ports:
+      - "8096:8096"
+    networks:
+      - homelab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.local`)"
+      - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"
+
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    volumes:
+      - /mnt/ssd/docker/adguard/work:/opt/adguardhome/work
+      - /mnt/ssd/docker/adguard/conf:/opt/adguardhome/conf
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "3001:3000"
+    networks:
+      - homelab
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/ssd/docker/portainer/data:/data
+    ports:
+      - "9000:9000"
+    networks:
+      - homelab
+
+  node-agent:
+    image: python:3.11-slim
+    container_name: node-agent
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - /mnt/ssd/agent:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/ssd:/mnt/ssd:ro
+    ports:
+      - "9090:9090"
+    command: ["python", "-u", "agent.py"]
+    environment:
+      AGENT_API_KEY: ${AGENT_API_KEY}
+    networks:
+      - homelab

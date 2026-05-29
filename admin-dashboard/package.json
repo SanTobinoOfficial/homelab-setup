@@ -1,0 +1,15 @@
+{
+  "name": "homelab-admin-dashboard",
+  "version": "1.0.0",
+  "description": "HomeLab Admin Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-ssh": "^13.2.0",
+    "dotenv": "^16.4.5"
+  }
+}
