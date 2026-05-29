@@ -4,6 +4,31 @@
 
 ---
 
+## WYMAGANY OS NA LAPTOPIE
+
+**Rekomendowany: Debian 12 "Bookworm" Server (bez GUI)**
+Alternatywnie: Ubuntu Server 22.04 LTS lub 24.04 LTS
+
+**Dlaczego Debian 12:**
+- Najlżejszy z głównych distro (mniej RAM na OS = więcej dla Dockera)
+- Bardzo stabilny — idealny do 24/7
+- Wsparcie do 2028 (LTS)
+- Doskonała kompatybilność z Dockerem
+- Brak zbędnych pakietów przy instalacji Server edition
+
+**Instalacja Debian 12:**
+1. Pobierz ISO: https://www.debian.org/distrib/netinst (netinstall ~400MB)
+2. Wgraj na pendrive: Rufus (Windows) lub `dd` (Linux)
+3. Podczas instalacji:
+   - Wybierz: **"Standard system utilities"** — NIE instaluj GUI/Desktop
+   - Ustaw hostname: `homelab`
+   - Utwórz usera (np. `homelab` lub swoje imię)
+4. Po instalacji — sklonuj repo i uruchom mnie (CLAUDE_PROMPT.md)
+
+**Jeśli już masz Ubuntu/inny Linux** — też działa, KROK 1 wykryje system automatycznie.
+
+---
+
 ## TWOJA ROLA
 
 Jesteś Claude Code uruchomionym na **LAPTOPIE ASUS** — jest to **SERVER NODE** w systemie homelab.
@@ -506,13 +531,22 @@ Użytkownicy mogą wejść na `http://portal.home` lub `http://heimdall.home`.
 
 Authelia chroni wrażliwe usługi przed nieautoryzowanym dostępem przez Traefik.
 
-**Utwórz konfigurację Authelia:**
+**Konfiguracja Authelia — szablony są już w repo:**
 
 ```bash
 mkdir -p /mnt/ssd/docker/authelia
+
+# Skopiuj szablony z repo (jeśli setup.sh nie zrobił tego automatycznie)
+cp ~/homelab-setup/laptop/authelia/configuration.yml /mnt/ssd/docker/authelia/
+cp ~/homelab-setup/laptop/authelia/users_database.yml /mnt/ssd/docker/authelia/
 ```
 
-Utwórz `/mnt/ssd/docker/authelia/configuration.yml`:
+Edytuj `/mnt/ssd/docker/authelia/configuration.yml`:
+- Zastąp `CHANGE_ME_JWT_SECRET_32_CHARS` → `$(openssl rand -hex 32)`
+- Zastąp `CHANGE_ME_SESSION_SECRET_32_CHARS` → `$(openssl rand -hex 32)`
+- Ustaw `default_redirection_url` na IP laptopa jeśli inne niż 192.168.1.100
+
+Przykład pliku `/mnt/ssd/docker/authelia/configuration.yml`:
 
 ```yaml
 theme: dark

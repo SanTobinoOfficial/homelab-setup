@@ -1,0 +1,83 @@
+## Authelia Configuration
+## Dokumentacja: https://www.authelia.com/configuration/
+
+theme: dark
+
+## Zmień na: openssl rand -hex 32
+jwt_secret: CHANGE_ME_JWT_SECRET_32_CHARS
+
+default_redirection_url: http://192.168.1.100:8888
+
+server:
+  host: 0.0.0.0
+  port: 9091
+
+log:
+  level: info
+
+totp:
+  issuer: homelab.local
+  period: 30
+  skew: 1
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: bcrypt
+      iterations: 1
+      salt_length: 16
+      parallelism: 8
+      memory: 64
+
+access_control:
+  default_policy: deny
+  rules:
+    ## Portainer — tylko admini
+    - domain: "portainer.homelab.local"
+      policy: one_factor
+      subject: "group:admins"
+
+    ## Traefik dashboard — tylko admini
+    - domain: "traefik.homelab.local"
+      policy: one_factor
+      subject: "group:admins"
+
+    ## Pi-hole — tylko admini
+    - domain: "pihole.homelab.local"
+      policy: one_factor
+      subject: "group:admins"
+
+    ## Heimdall — wszyscy bez logowania
+    - domain: "portal.homelab.local"
+      policy: bypass
+
+    ## Nextcloud — wszyscy (Nextcloud ma własne auth)
+    - domain: "nextcloud.homelab.local"
+      policy: bypass
+
+    ## Jellyfin — wszyscy (Jellyfin ma własne auth)
+    - domain: "jellyfin.homelab.local"
+      policy: bypass
+
+session:
+  name: authelia_session
+  ## Zmień na: openssl rand -hex 32
+  secret: CHANGE_ME_SESSION_SECRET_32_CHARS
+  expiration: 3600
+  inactivity: 300
+  domain: homelab.local
+
+regulation:
+  max_retries: 3
+  find_time: 2m
+  ban_time: 5m
+
+storage:
+  local:
+    path: /config/db.sqlite3
+
+notifier:
+  ## Powiadomienia zapisywane do pliku (brak maila w homelabie)
+  filesystem:
+    filename: /config/notification.txt

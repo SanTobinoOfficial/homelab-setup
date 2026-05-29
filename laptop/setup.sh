@@ -103,6 +103,13 @@ chmod +x /opt/homelab/backup.sh
 mkdir -p /opt/homelab/discord-bot
 cp -r "$REPO_ROOT/discord-bot/." /opt/homelab/discord-bot/
 
+# Authelia config templates
+mkdir -p /mnt/ssd/docker/authelia
+[ ! -f /mnt/ssd/docker/authelia/configuration.yml ] && \
+  cp "$SCRIPT_DIR/authelia/configuration.yml" /mnt/ssd/docker/authelia/
+[ ! -f /mnt/ssd/docker/authelia/users_database.yml ] && \
+  cp "$SCRIPT_DIR/authelia/users_database.yml" /mnt/ssd/docker/authelia/
+
 # User portal
 mkdir -p /opt/homelab/user-portal
 cp -r "$SCRIPT_DIR/user-portal/." /opt/homelab/user-portal/

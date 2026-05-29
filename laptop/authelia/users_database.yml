@@ -1,0 +1,22 @@
+## Authelia Users Database
+## Generuj hash hasła: docker run --rm authelia/authelia:latest authelia hash-password 'TWOJE_HASLO'
+## Wklej wynik w pole 'password' poniżej
+
+users:
+  ## Konto administratora
+  admin:
+    displayname: "Administrator"
+    ## Zastąp prawdziwym hashem: docker run --rm authelia/authelia:latest authelia hash-password 'haslo'
+    password: "$6$rounds=50000$CHANGE_THIS_TO_REAL_HASH"
+    email: admin@homelab.local
+    groups:
+      - admins
+      - users
+
+  ## Przykładowy użytkownik — możesz dodać więcej w tym samym formacie
+  ## user1:
+  ##   displayname: "Imię Użytkownika"
+  ##   password: "$6$rounds=50000$HASH_TUTAJ"
+  ##   email: user1@homelab.local
+  ##   groups:
+  ##     - users
