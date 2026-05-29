@@ -23,9 +23,48 @@ Alternatywnie: Ubuntu Server 22.04 LTS lub 24.04 LTS
    - Wybierz: **"Standard system utilities"** — NIE instaluj GUI/Desktop
    - Ustaw hostname: `homelab`
    - Utwórz usera (np. `homelab` lub swoje imię)
-4. Po instalacji — sklonuj repo i uruchom mnie (CLAUDE_PROMPT.md)
+4. Po instalacji — wykonaj kroki poniżej
 
 **Jeśli już masz Ubuntu/inny Linux** — też działa, KROK 1 wykryje system automatycznie.
+
+---
+
+## JAK ZAINSTALOWAĆ CLAUDE CODE NA LAPTOPIE
+
+Po zainstalowaniu Debian 12 (lub innego Linux), zanim uruchomisz mnie — wykonaj to:
+
+```bash
+# 1. Zainstaluj git i curl (może już być)
+sudo apt-get update && sudo apt-get install -y git curl
+
+# 2. Zainstaluj Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version   # powinno pokazać v20.x
+
+# 3. Zainstaluj Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# 4. Zaloguj się do Claude
+claude
+# Otworzy się przeglądarka lub poprosi o API key.
+# Jeśli nie ma przeglądarki (serwer bez GUI):
+#   claude config set -g apiKey sk-ant-...
+#   (API key znajdziesz na console.anthropic.com)
+
+# 5. Sklonuj repo
+git clone https://github.com/SanTobinoOfficial/homelab-setup
+cd homelab-setup
+
+# 6. Uruchom Claude Code w tym folderze
+claude
+```
+
+Gdy Claude Code się uruchomi, wklej ten prompt:
+```
+Postępuj zgodnie z instrukcjami w pliku CLAUDE_PROMPT.md znajdującym się w tym repo.
+```
+Claude Code przeczyta plik i poprowadzi Cię przez cały setup krok po kroku.
 
 ---
 
