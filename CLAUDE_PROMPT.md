@@ -432,127 +432,186 @@ Gdy napiszesz na Discordzie `!claude sprawdź czy nextcloud działa i napraw pro
 
 ---
 
-## KROK 15 — USER PORTAL (konsola użytkownika / captive portal)
+## KROK 15 — PORTAL UŻYTKOWNIKA (Pi-hole + Heimdall + Authelia)
 
-Gdy ktoś połączy się z WiFi, automatycznie zostaje przekierowany na stronę portalu
-dopasowaną do jego roli przypisanej po adresie MAC urządzenia.
-
-### Jak działa system
+System oparty wyłącznie na gotowych narzędziach:
 
 ```
-Nowe urządzenie łączy się z WiFi
-         ↓
-network-watcher wykrywa nieznany MAC w tablicy ARP
-         ↓
-iptables przekierowuje ruch HTTP (port 80) → portal (port 8888)
-         ↓
-Przeglądarka otwiera portal → urządzenie nie ma roli → formularz rejestracji gościa
-         ↓ (admin przypisuje rolę przez /admin lub Discorda)
-Przy następnym połączeniu → portal pokazuje dashboard zgodny z rolą
-         ↓
-iptables redirect jest usuwany → urządzenie ma normalny dostęp
+Urządzenie łączy się z WiFi
+        ↓
+Router ustawia DNS → Pi-hole (192.168.1.100)
+        ↓
+Pi-hole przypisuje urządzenie do grupy po MAC → inne reguły blokowania
+        ↓
+Router captive portal → Heimdall (http://192.168.1.100:8888)
+        ↓
+Wrażliwe usługi (Portainer, Traefik) chronione przez Authelia (login/hasło + grupy)
 ```
 
-**Role:**
-| Rola | Co widzi |
-|------|----------|
-| `admin` | Wszystkie usługi + Admin Dashboard na PC + Portainer |
-| `user` | Nextcloud (własne pliki) + Jellyfin |
-| `guest` | Tylko Jellyfin (podgląd) |
+---
 
-### 15a. Skopiuj pliki portalu
+### 15a. Pi-hole — DNS + DHCP + profile per-klient
+
+Pi-hole uruchomił się już w KROK 9. Otwórz panel:
+`http://192.168.1.100:8053/admin`
+
+**Ustaw Pi-hole jako DNS w routerze:**
+1. Panel routera (zwykle 192.168.1.1)
+2. DHCP → Primary DNS → `192.168.1.100`
+3. Secondary DNS → `8.8.8.8`
+
+**Dodaj DNS rekordy dla lokalnych nazw:**
+Panel Pi-hole → Local DNS → DNS Records:
+```
+portal.home     → 192.168.1.100
+heimdall.home   → 192.168.1.100
+nextcloud.home  → 192.168.1.100
+jellyfin.home   → 192.168.1.100
+```
+
+**Przypisywanie urządzeń do grup (per MAC):**
+1. Panel Pi-hole → Clients → Add client → wpisz MAC urządzenia
+2. Group Management → Groups → przypisz klienta do grupy (admin/user/guest)
+3. Każda grupa może mieć inne listy blokowania
+
+**Pi-hole DHCP (opcjonalne — jeśli chcesz statyczne IP po MAC):**
+Panel Pi-hole → Settings → DHCP → włącz DHCP server
+Dodaj Static leases: MAC → IP (np. telefon Marka → 192.168.1.101)
+
+---
+
+### 15b. Heimdall — dashboard użytkownika
+
+Heimdall to gotowy panel aplikacji — każdy widzi linki do usług, do których ma dostęp.
+Otwórz: `http://192.168.1.100:8888`
+
+**Dodaj aplikacje w Heimdall (przez UI):**
+- Nextcloud: `http://192.168.1.100:8080`
+- Jellyfin: `http://192.168.1.100:8096`
+- Portainer: `http://192.168.1.100:9000` (tylko dla admina — chroniony przez Authelia)
+- Pi-hole: `http://192.168.1.100:8053/admin`
+
+**Captive portal — auto-redirect po połączeniu z WiFi:**
+
+W panelu routera:
+- Szukaj: "Captive Portal" / "Guest Network Portal" / "Walled Garden"
+- Ustaw portal URL: `http://192.168.1.100:8888`
+
+Jeśli router nie ma captive portal — wystarczy ustawić Pi-hole jako DNS.
+Użytkownicy mogą wejść na `http://portal.home` lub `http://heimdall.home`.
+
+---
+
+### 15c. Authelia — logowanie i role (admin/user/guest)
+
+Authelia chroni wrażliwe usługi przed nieautoryzowanym dostępem przez Traefik.
+
+**Utwórz konfigurację Authelia:**
 
 ```bash
-mkdir -p /opt/homelab/user-portal
-cp -r ~/homelab-setup/laptop/user-portal/. /opt/homelab/user-portal/
-mkdir -p /mnt/ssd/portal
+mkdir -p /mnt/ssd/docker/authelia
 ```
 
-### 15b. Włącz IP forwarding i iptables (wymagane dla captive portal)
+Utwórz `/mnt/ssd/docker/authelia/configuration.yml`:
 
+```yaml
+theme: dark
+jwt_secret: ZMIEŃ_NA_LOSOWY_STRING_32_ZNAKI
+
+default_redirection_url: http://heimdall.home
+
+server:
+  host: 0.0.0.0
+  port: 9091
+
+log:
+  level: info
+
+totp:
+  issuer: homelab.local
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: bcrypt
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "portainer.homelab.local"
+      policy: one_factor
+      subject: "group:admins"
+    - domain: "heimdall.homelab.local"
+      policy: bypass
+    - domain: "jellyfin.homelab.local"
+      policy: bypass
+    - domain: "nextcloud.homelab.local"
+      policy: bypass
+
+session:
+  name: authelia_session
+  secret: ZMIEŃ_NA_LOSOWY_STRING_32_ZNAKI
+  expiration: 3600
+  inactivity: 300
+  domain: homelab.local
+
+storage:
+  local:
+    path: /config/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+```
+
+Utwórz `/mnt/ssd/docker/authelia/users_database.yml`:
+
+```yaml
+users:
+  admin:
+    displayname: "Administrator"
+    # Generuj hash: docker run authelia/authelia:latest authelia hash-password 'twoje_haslo'
+    password: "$6$HASH_TUTAJ"
+    email: admin@homelab.local
+    groups:
+      - admins
+      - users
+
+  marek:
+    displayname: "Marek"
+    password: "$6$HASH_TUTAJ"
+    email: marek@homelab.local
+    groups:
+      - users
+```
+
+Generuj hasła:
 ```bash
-# Włącz forwarding
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-
-# Zainstaluj iptables jeśli brak
-sudo apt-get install -y iptables iptables-persistent
-
-# Włącz NAT na interfejsie WiFi/sieciowym
-IFACE=$(ip route | grep default | awk '{print $5}')
-echo "Interfejs: $IFACE"
-
-sudo iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
-
-# Zapisz reguły żeby przetrwały restart
-sudo netfilter-persistent save
+docker run --rm authelia/authelia:latest authelia hash-password 'twoje_haslo'
+# Skopiuj wynik do users_database.yml
 ```
 
-### 15c. Ustaw AdGuard Home jako DNS (żeby portal.home działał)
-
-Po uruchomieniu AdGuard Home (http://192.168.1.100:3001):
-1. **Filters → DNS rewrites → Add DNS rewrite**
-2. Dodaj: `portal.home` → `192.168.1.100`
-3. Dodaj: `homelab.local` → `192.168.1.100`
-
-Teraz każde urządzenie używające AdGuard jako DNS może wejść na `http://portal.home:8888`
-
-### 15d. Skonfiguruj router — captive portal redirect
-
-W panelu routera (zwykle 192.168.1.1):
-- **DHCP → Primary DNS:** ustaw na `192.168.1.100` (AdGuard)
-- Jeśli router ma **Captive Portal / Guest WiFi Portal:** ustaw URL na `http://192.168.1.100:8888`
-
-Bez zmiany DNS w routerze — captive portal nadal działa przez iptables redirect.
-
-### 15e. Uruchom portal i watcher
-
+Uruchom Authelia:
 ```bash
 cd /opt/homelab
-docker compose up -d user-portal network-watcher
-docker compose logs user-portal --tail=20
-docker compose logs network-watcher --tail=20
+docker compose up -d authelia
+docker compose logs authelia --tail=20
 ```
 
-### 15f. Zarejestruj swoje urządzenie jako admin
+Panel Authelia: `http://192.168.1.100:9091`
 
-Znajdź swój MAC adres:
-```bash
-# Na telefonie: Ustawienia → WiFi → Twoja sieć → MAC adres
-# Na PC: ipconfig /all (Windows) lub ip link (Linux)
-```
+---
 
-Dodaj siebie jako admin przez terminal laptopa:
-```bash
-# Przez watcher.py:
-python3 /opt/homelab/user-portal/watcher.py assign AA:BB:CC:DD:EE:FF admin "Telefon Tobiasza"
+### Podsumowanie systemu ról
 
-# Lub przez panel admina w przeglądarce:
-# http://192.168.1.100:8888/admin
-# (dostępne tylko jeśli twoje urządzenie ma rolę admin)
-```
-
-### 15g. Zarządzanie urządzeniami przez Discord
-
-Discord bot automatycznie powiadamia o nowych urządzeniach:
-```
-🆕 Nowe urządzenie w sieci
-IP: 192.168.1.45
-MAC: ab:cd:ef:12:34:56
-```
-
-Przypisz rolę przez Discord:
-```
-!run python3 /opt/homelab/user-portal/watcher.py assign ab:cd:ef:12:34:56 user "Telefon Marka"
-```
-
-### Adresy portalu
-
-| URL | Opis |
-|-----|------|
-| `http://192.168.1.100:8888` | Portal (dostęp przez IP) |
-| `http://portal.home:8888` | Portal (po skonfigurowaniu DNS) |
-| `http://192.168.1.100:8888/admin` | Panel zarządzania urządzeniami (tylko admin) |
+| Narzędzie | Co robi |
+|-----------|---------|
+| **Pi-hole** | DNS po MAC → różne profile blokowania reklam per urządzenie |
+| **Pi-hole DHCP** | Statyczne IP po MAC → łatwa identyfikacja urządzeń |
+| **Heimdall** | Dashboard z linkami do usług (jeden dla wszystkich) |
+| **Authelia** | Login + grupy → kontrola dostępu do wrażliwych usług |
+| **Router captive portal** | Auto-redirect na Heimdall po połączeniu z WiFi |
 
 ---
 

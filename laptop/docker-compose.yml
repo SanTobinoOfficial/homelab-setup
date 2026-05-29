@@ -6,6 +6,9 @@ networks:
 
 services:
 
+  # ─────────────────────────────────────
+  # TRAEFIK — Reverse Proxy + Auth middleware
+  # ─────────────────────────────────────
   traefik:
     image: traefik:v3.0
     container_name: traefik
@@ -27,6 +30,91 @@ services:
     networks:
       - homelab
 
+  # ─────────────────────────────────────
+  # AUTHELIA — Authentication + Role-based access
+  # Chroni wrażliwe usługi (Portainer, Traefik) za logowaniem
+  # Użytkownicy i grupy konfigurowane w users_database.yml
+  # ─────────────────────────────────────
+  authelia:
+    image: authelia/authelia:latest
+    container_name: authelia
+    restart: unless-stopped
+    volumes:
+      - /mnt/ssd/docker/authelia:/config
+    environment:
+      TZ: Europe/Warsaw
+    ports:
+      - "9091:9091"
+    networks:
+      - homelab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.authelia.rule=Host(`auth.homelab.local`)"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/verify?rd=http://auth.homelab.local"
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+
+  # ─────────────────────────────────────
+  # HEIMDALL — Dashboard użytkownika (zamiast custom portalu)
+  # Każdy użytkownik ma swój zestaw zakładek/skrótów
+  # http://<laptop>:8888
+  # ─────────────────────────────────────
+  heimdall:
+    image: lscr.io/linuxserver/heimdall:latest
+    container_name: heimdall
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Europe/Warsaw
+    volumes:
+      - /mnt/ssd/docker/heimdall:/config
+    ports:
+      - "8888:80"
+    networks:
+      - homelab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.heimdall.rule=Host(`portal.homelab.local`)"
+      - "traefik.http.services.heimdall.loadbalancer.server.port=80"
+
+  # ─────────────────────────────────────
+  # PI-HOLE — DNS + DHCP + Ad blocking
+  # Zastępuje AdGuard. Pi-hole v6 obsługuje profile per-klient (po MAC).
+  # Web UI: http://<laptop>:8053/admin
+  # DNS: port 53 | DHCP: port 67
+  # ─────────────────────────────────────
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Warsaw
+      WEBPASSWORD: ${PIHOLE_PASSWORD}
+      PIHOLE_DNS_: "8.8.8.8;1.1.1.1"
+      DNSMASQ_LISTENING: all
+      # DHCP (opcjonalne — włącz jeśli chcesz Pi-hole jako DHCP serwer)
+      # DHCP_ACTIVE: "true"
+      # DHCP_START: "192.168.1.50"
+      # DHCP_END: "192.168.1.200"
+      # DHCP_ROUTER: "192.168.1.1"
+    volumes:
+      - /mnt/ssd/docker/pihole/etc:/etc/pihole
+      - /mnt/ssd/docker/pihole/dnsmasq:/etc/dnsmasq.d
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "67:67/udp"   # DHCP
+      - "8053:80"     # Web UI na 8053 żeby nie kolidować z Traefik
+    networks:
+      - homelab
+    cap_add:
+      - NET_ADMIN
+
+  # ─────────────────────────────────────
+  # MARIADB — baza danych Nextcloud
+  # ─────────────────────────────────────
   nextcloud-db:
     image: mariadb:10.11
     container_name: nextcloud-db
@@ -46,6 +134,9 @@ services:
       timeout: 5s
       retries: 5
 
+  # ─────────────────────────────────────
+  # NEXTCLOUD — NAS / Cloud / User files
+  # ─────────────────────────────────────
   nextcloud:
     image: nextcloud:28-apache
     container_name: nextcloud
@@ -74,6 +165,9 @@ services:
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.local`)"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
 
+  # ─────────────────────────────────────
+  # JELLYFIN — Media Server
+  # ─────────────────────────────────────
   jellyfin:
     image: jellyfin/jellyfin:latest
     container_name: jellyfin
@@ -93,20 +187,9 @@ services:
       - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.local`)"
       - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"
 
-  adguard:
-    image: adguard/adguardhome:latest
-    container_name: adguard
-    restart: unless-stopped
-    volumes:
-      - /mnt/ssd/docker/adguard/work:/opt/adguardhome/work
-      - /mnt/ssd/docker/adguard/conf:/opt/adguardhome/conf
-    ports:
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "3001:3000"
-    networks:
-      - homelab
-
+  # ─────────────────────────────────────
+  # PORTAINER — Docker Management
+  # ─────────────────────────────────────
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
@@ -119,6 +202,9 @@ services:
     networks:
       - homelab
 
+  # ─────────────────────────────────────
+  # NODE AGENT — REST API dla Admin Dashboard na PC
+  # ─────────────────────────────────────
   node-agent:
     image: python:3.11-slim
     container_name: node-agent
@@ -137,43 +223,6 @@ services:
       - homelab
 
   # ─────────────────────────────────────
-  # USER PORTAL — captive portal, role-based console
-  # ─────────────────────────────────────
-  user-portal:
-    image: node:20-slim
-    container_name: homelab-user-portal
-    restart: unless-stopped
-    working_dir: /app
-    volumes:
-      - /opt/homelab/user-portal:/app
-      - /mnt/ssd/portal:/mnt/ssd/portal
-    command: sh -c "npm install --omit=dev && node server.js"
-    environment:
-      AGENT_API_KEY: ${AGENT_API_KEY}
-      LAPTOP_IP: ${LAPTOP_IP:-192.168.1.100}
-    ports:
-      - "8888:8888"
-    network_mode: host  # potrzebny do odczytu ARP (ip neigh) i iptables
-
-  # ─────────────────────────────────────
-  # NETWORK WATCHER — captive portal trigger
-  # ─────────────────────────────────────
-  network-watcher:
-    image: python:3.11-slim
-    container_name: homelab-network-watcher
-    restart: unless-stopped
-    volumes:
-      - /opt/homelab/user-portal:/app
-      - /mnt/ssd/portal:/mnt/ssd/portal
-    working_dir: /app
-    command: ["python", "-u", "watcher.py"]
-    environment:
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-    network_mode: host  # potrzebny do ARP i iptables
-    cap_add:
-      - NET_ADMIN  # do iptables redirect
-
-  # ─────────────────────────────────────
   # DISCORD BOT — kontrola przez Discord
   # ─────────────────────────────────────
   discord-bot:
@@ -183,7 +232,6 @@ services:
     working_dir: /app
     volumes:
       - /opt/homelab/discord-bot:/app
-      # Montuj claude CLI z hosta jeśli zainstalowany (dla komendy !claude)
       - /usr/local/bin/claude:/usr/local/bin/claude:ro
       - /root/.claude:/root/.claude:ro
     command: sh -c "npm install --omit=dev && node bot.js"
@@ -191,7 +239,6 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       ALLOWED_CHANNEL_ID: ${ALLOWED_CHANNEL_ID}
       ADMIN_USER_ID: ${ADMIN_USER_ID}
-      # Agent URL przez wewnętrzną sieć Docker
       AGENT_URL: http://node-agent:9090
       AGENT_API_KEY: ${AGENT_API_KEY}
       CLAUDE_CLI: claude
