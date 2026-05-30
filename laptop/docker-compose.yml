@@ -246,3 +246,22 @@ services:
       - node-agent
     networks:
       - homelab
+
+  # ─────────────────────────────────────
+  # TTYD — Web Terminal (SSH konsola z przeglądarki)
+  # http://<laptop>:7681
+  # ─────────────────────────────────────
+  ttyd:
+    image: tsl0922/ttyd:latest
+    container_name: ttyd
+    restart: unless-stopped
+    command: ttyd -p 7681 -t fontSize=14 -t theme={"background":"#0a0c12","foreground":"#e5e7eb"} login
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/homelab:/opt/homelab
+      - /mnt/ssd:/mnt/ssd
+    ports:
+      - "7681:7681"
+    networks:
+      - homelab
+    privileged: true
