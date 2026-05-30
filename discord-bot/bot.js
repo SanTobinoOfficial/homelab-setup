@@ -444,6 +444,19 @@ const commands = {
     const session = { history: [], lastActivity: Date.now(), proc: null };
     claudeSessions.set(thread.id, session);
 
+    // Remote Control link — opens interactive Claude in browser (phone/PC)
+    const serverIP = process.env.SERVER_IP
+      || process.env.AGENT_URL?.match(/\/\/([\d.a-z-]+)/i)?.[1]?.replace(/:\d+$/, "")
+      || "localhost";
+    await thread.send({
+      embeds: [new EmbedBuilder()
+        .setColor(0x059669)
+        .setTitle("📱 Remote Control — otwórz na telefonie")
+        .setDescription(`**http://${serverIP}:7681**\nInteraktywny Claude w przeglądarce z pełnym dostępem do serwera.`)
+        .setFooter({ text: "Każde połączenie = nowa sesja Claude · --dangerously-skip-permissions aktywne" })
+      ],
+    });
+
     await thread.send({
       embeds: [new EmbedBuilder()
         .setColor(0x6366f1)

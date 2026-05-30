@@ -255,7 +255,7 @@ services:
     image: tsl0922/ttyd:latest
     container_name: ttyd
     restart: unless-stopped
-    command: ttyd -p 7681 -t fontSize=14 -t disableReconnect=false bash
+    command: ttyd -p 7681 -t fontSize=16 -t disableReconnect=true -W claude --dangerously-skip-permissions
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/homelab:/opt/homelab
