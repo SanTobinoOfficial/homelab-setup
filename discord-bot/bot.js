@@ -87,6 +87,7 @@ async function runClaude(fullPrompt) {
       "--print",
       "--output-format", "stream-json",
       "--verbose",
+      "--dangerously-skip-permissions",
       fullPrompt,
     ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT });
 
