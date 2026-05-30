@@ -4,6 +4,9 @@ const {
   GatewayIntentBits,
   EmbedBuilder,
   ThreadAutoArchiveDuration,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } = require("discord.js");
 const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
@@ -20,13 +23,16 @@ const SESSION_TIMEOUT = parseInt(process.env.CLAUDE_SESSION_TIMEOUT || "30")  * 
 
 if (!DISCORD_TOKEN) { console.error("DISCORD_TOKEN not set"); process.exit(1); }
 
-// Active Claude sessions: threadId → {history: [{role, content}], lastActivity}
+// Active Claude sessions: threadId → {history, lastActivity, proc}
 const claudeSessions = new Map();
 
 setInterval(() => {
   const now = Date.now();
   for (const [id, s] of claudeSessions) {
-    if (now - s.lastActivity > SESSION_TIMEOUT) claudeSessions.delete(id);
+    if (now - s.lastActivity > SESSION_TIMEOUT) {
+      if (s.proc) s.proc.kill();
+      claudeSessions.delete(id);
+    }
   }
 }, 5 * 60 * 1000);
 
@@ -37,6 +43,35 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+// ── Tool display metadata ─────────────────────────────────────────────────────
+const TOOL_META = {
+  Bash:       { emoji: "🔧", color: 0xf59e0b, label: "Bash" },
+  Read:       { emoji: "📖", color: 0x3b82f6, label: "Odczyt pliku" },
+  Write:      { emoji: "✏️",  color: 0xec4899, label: "Zapis pliku" },
+  Edit:       { emoji: "✏️",  color: 0xec4899, label: "Edycja pliku" },
+  MultiEdit:  { emoji: "✏️",  color: 0xec4899, label: "Edycja plików" },
+  Glob:       { emoji: "🔍", color: 0x6366f1, label: "Glob" },
+  Grep:       { emoji: "🔍", color: 0x6366f1, label: "Grep" },
+  LS:         { emoji: "📁", color: 0x10b981, label: "Listowanie" },
+  WebSearch:  { emoji: "🌐", color: 0x0ea5e9, label: "Web Search" },
+  WebFetch:   { emoji: "🌐", color: 0x0ea5e9, label: "Web Fetch" },
+  TodoRead:   { emoji: "📋", color: 0x8b5cf6, label: "Todo" },
+  TodoWrite:  { emoji: "📋", color: 0x8b5cf6, label: "Todo Update" },
+};
+
+function getMeta(name) {
+  return TOOL_META[name] || { emoji: "⚙️", color: 0x6b7280, label: name };
+}
+
+function fmtInput(name, input) {
+  if (!input) return "";
+  if (typeof input !== "object") return String(input).slice(0, 900);
+  if (name === "Bash") return ("$ " + (input.command || "")).slice(0, 900);
+  if (["Read", "Write", "Edit", "MultiEdit"].includes(name))
+    return (input.file_path || input.path || JSON.stringify(input)).slice(0, 900);
+  return JSON.stringify(input, null, 2).slice(0, 900);
+}
 
 // ── Agent API helper ──────────────────────────────────────────────────────────
 async function agentFetch(path, method = "GET", body = null) {
@@ -75,74 +110,190 @@ function uptime(s) {
 
 function statusEmoji(s) { return s === "running" ? "🟢" : "🔴"; }
 
-// ── Claude runner (stream-json → thinking + response) ────────────────────────
-async function runClaude(fullPrompt) {
+// ── Control buttons ───────────────────────────────────────────────────────────
+function controlRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("claude_stop").setLabel("⏹ Stop").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("claude_clear").setLabel("🔄 Wyczyść historię").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("claude_exit").setLabel("🚪 Zakończ").setStyle(ButtonStyle.Secondary),
+  );
+}
+
+// ── Stream Claude to thread ───────────────────────────────────────────────────
+function streamClaudeToThread(thread, fullPrompt, session) {
   return new Promise((resolve, reject) => {
-    let thinking = "";
-    let response = "";
-    let rawOutput = "";
+    const events = [];
     let buffer = "";
+
+    let errOutput = "";
 
     const proc = spawn(CLAUDE_CLI, [
       "--print",
       "--output-format", "stream-json",
-      "--verbose",
       "--dangerously-skip-permissions",
       fullPrompt,
     ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT });
 
+    session.proc = proc;
+
     proc.stdout.on("data", d => {
-      const text = d.toString();
-      rawOutput += text;
-      buffer += text;
+      buffer += d.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop();
       for (const line of lines) {
         if (!line.trim()) continue;
-        try {
-          const ev = JSON.parse(line);
-          if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
-            for (const block of ev.message.content) {
-              if (block.type === "thinking") thinking += block.thinking + "\n";
-              if (block.type === "text") response += block.text;
-            }
-          } else if (ev.type === "result" && ev.result && !response) {
-            response = ev.result;
-          }
-        } catch {
-          // Not JSON line — treat as plain text (older CLI versions)
-          if (!thinking && !response) response += line + "\n";
-        }
+        try { events.push(JSON.parse(line)); } catch {}
       }
     });
 
-    proc.on("close", code => {
-      if (buffer.trim()) {
+    proc.stderr.on("data", d => { errOutput += d.toString(); });
+
+    proc.on("close", async (code) => {
+      session.proc = null;
+
+      // Fallback: if stream-json failed, retry with plain --print
+      if (code !== 0 && events.length === 0) {
         try {
-          const ev = JSON.parse(buffer);
-          if (ev.type === "result" && !response) response = ev.result;
-        } catch {
-          if (!response) response += buffer;
+          const plain = await new Promise((res, rej) => {
+            let out = "", err = "";
+            const p = spawn(CLAUDE_CLI, ["--print", "--dangerously-skip-permissions", fullPrompt], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT });
+            p.stdout.on("data", d => out += d);
+            p.stderr.on("data", d => err += d);
+            p.on("close", c => c === 0 ? res(out.trim()) : rej(new Error(err.trim() || `Kod ${c}`)));
+            p.on("error", rej);
+          });
+          for (const part of chunk(plain || "(brak odpowiedzi)", 3900)) {
+            await thread.send({ embeds: [new EmbedBuilder().setColor(0x6366f1).setAuthor({ name: "🤖 Claude" }).setDescription(part)] }).catch(() => {});
+          }
+          return resolve({ response: plain });
+        } catch (fbErr) {
+          return reject(new Error(`${fbErr.message} | stderr: ${errOutput.slice(0, 300)}`));
         }
       }
-      if (!response && rawOutput) {
-        // Strip JSON lines, keep plain text lines as fallback
-        response = rawOutput.split("\n")
-          .filter(l => { try { JSON.parse(l); return false; } catch { return l.trim(); } })
-          .join("\n").trim();
+
+      const toolMsgs   = new Map(); // tool_use_id → {msg, meta, inputFmt}
+      let thinkingText = "";
+      let responseText = "";
+      let costInfo     = null;
+
+      for (const ev of events) {
+        try {
+          // ── Assistant message (thinking / text / tool_use) ────────────────
+          if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
+            for (const block of ev.message.content) {
+              if (block.type === "thinking") {
+                thinkingText += block.thinking + "\n";
+
+              } else if (block.type === "text") {
+                responseText += block.text;
+
+              } else if (block.type === "tool_use") {
+                const meta     = getMeta(block.name);
+                const inputFmt = fmtInput(block.name, block.input);
+                const embed = new EmbedBuilder()
+                  .setColor(meta.color)
+                  .setAuthor({ name: `${meta.emoji} ${meta.label}` })
+                  .setDescription(`\`\`\`\n${inputFmt}\n\`\`\``)
+                  .setFooter({ text: "⏳ Uruchamianie..." });
+                const m = await thread.send({ embeds: [embed] });
+                toolMsgs.set(block.id, { msg: m, meta, inputFmt });
+              }
+            }
+          }
+
+          // ── User message (tool_result) ────────────────────────────────────
+          else if (ev.type === "user" && Array.isArray(ev.message?.content)) {
+            for (const block of ev.message.content) {
+              if (block.type !== "tool_result") continue;
+              const entry = toolMsgs.get(block.tool_use_id);
+              if (!entry) continue;
+
+              const output = (Array.isArray(block.content)
+                ? block.content.map(c => c.text || "").join("\n")
+                : String(block.content || "")
+              ).slice(0, 900);
+
+              const isErr = !!block.is_error;
+              const updated = new EmbedBuilder()
+                .setColor(isErr ? 0xef4444 : 0x10b981)
+                .setAuthor({ name: `${entry.meta.emoji} ${entry.meta.label}` })
+                .setDescription(`\`\`\`\n${entry.inputFmt}\n\`\`\``)
+                .addFields({
+                  name: isErr ? "❌ Błąd" : "📤 Wynik",
+                  value: `\`\`\`\n${output || "(brak output)"}\n\`\`\``,
+                })
+                .setFooter({ text: isErr ? "Błąd ❌" : "Ukończono ✅" });
+              await entry.msg.edit({ embeds: [updated] });
+              toolMsgs.delete(block.tool_use_id);
+            }
+          }
+
+          // ── Final result ──────────────────────────────────────────────────
+          else if (ev.type === "result") {
+            if (!responseText && ev.result) responseText = ev.result;
+            costInfo = {
+              cost:  ev.total_cost_usd != null ? `$${ev.total_cost_usd.toFixed(4)}` : null,
+              dur:   ev.duration_ms    != null ? `${(ev.duration_ms / 1000).toFixed(1)}s` : null,
+              turns: ev.num_turns,
+            };
+          }
+
+        } catch (err) {
+          console.error("Event processing error:", err.message);
+        }
       }
-      if (code === 0 || response) {
-        resolve({ thinking: thinking.trim(), response: response.trim() || "(brak odpowiedzi)" });
-      } else {
-        reject(new Error(`Claude zakończył z kodem ${code}`));
+
+      // Send thinking block
+      if (thinkingText.trim()) {
+        const t = thinkingText.trim().slice(0, 3900);
+        await thread.send({
+          embeds: [new EmbedBuilder()
+            .setColor(0x8b5cf6)
+            .setAuthor({ name: "💭 Myślenie Claude" })
+            .setDescription(`\`\`\`\n${t}${thinkingText.length > 3900 ? "\n..." : ""}\n\`\`\``)
+          ],
+        }).catch(() => {});
       }
+
+      // Send response (split into embed chunks, max 4096 per embed)
+      if (responseText.trim()) {
+        const parts = chunk(responseText.trim(), 3900);
+        for (let i = 0; i < parts.length; i++) {
+          await thread.send({
+            embeds: [new EmbedBuilder()
+              .setColor(0x6366f1)
+              .setAuthor({ name: i === 0 ? "🤖 Claude" : "🤖 Claude (cd.)" })
+              .setDescription(parts[i])
+            ],
+          }).catch(() => {});
+        }
+      }
+
+      // Cost / duration footer
+      if (costInfo) {
+        const parts = [];
+        if (costInfo.dur)            parts.push(`⏱ ${costInfo.dur}`);
+        if (costInfo.cost)           parts.push(`💰 ${costInfo.cost}`);
+        if (costInfo.turns != null)  parts.push(`🔄 ${costInfo.turns} tur`);
+        if (parts.length) {
+          await thread.send({
+            embeds: [new EmbedBuilder()
+              .setColor(0x1f2937)
+              .setFooter({ text: parts.join("  •  ") })
+            ],
+          }).catch(() => {});
+        }
+      }
+
+      resolve({ response: responseText });
     });
-    proc.on("error", reject);
+
+    proc.on("error", (err) => { session.proc = null; reject(err); });
   });
 }
 
 function buildPromptWithHistory(history, userMessage) {
-  const recent = history.slice(-10); // keep last 5 turns
+  const recent = history.slice(-10);
   if (recent.length === 0) return userMessage;
   const ctx = recent.map(h => `${h.role === "user" ? "User" : "Claude"}: ${h.content}`).join("\n\n");
   return (
@@ -150,18 +301,6 @@ function buildPromptWithHistory(history, userMessage) {
     `User: ${userMessage}\n\n` +
     `Odpowiedz na ostatnią wiadomość biorąc pod uwagę powyższy kontekst.`
   );
-}
-
-async function sendClaudeResult(target, result) {
-  if (result.thinking) {
-    const t = result.thinking.slice(0, 1800);
-    const suffix = result.thinking.length > 1800 ? "\n[...]" : "";
-    await target.send(`💭 **Myślenie Claude:**\n\`\`\`\n${t}${suffix}\n\`\`\``);
-  }
-  const parts = chunk(result.response);
-  for (let i = 0; i < parts.length; i++) {
-    await target.send(i === 0 ? `🤖 **Claude:**\n${parts[i]}` : parts[i]);
-  }
 }
 
 // ── Command handlers ──────────────────────────────────────────────────────────
@@ -283,13 +422,13 @@ const commands = {
     }
   },
 
-  // Open a Claude chat thread — each message in the thread continues the conversation
+  // Open a Claude chat thread with full CLI-like experience
   async claude(msg, args) {
     if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
     const initialPrompt = args.join(" ");
     if (!initialPrompt) return msg.reply(
       "Użycie: `!claude <prompt>` — otwiera wątek czatu z Claude\n" +
-      "W wątku pisz bezpośrednio. `!exit` kończy sesję."
+      "W wątku pisz bezpośrednio. `!exit` lub przycisk 🚪 kończy sesję."
     );
 
     let thread;
@@ -302,29 +441,31 @@ const commands = {
       return msg.reply(`❌ Nie mogę utworzyć wątku: ${e.message}`);
     }
 
-    claudeSessions.set(thread.id, { history: [], lastActivity: Date.now() });
+    const session = { history: [], lastActivity: Date.now(), proc: null };
+    claudeSessions.set(thread.id, session);
 
-    await thread.send(
-      `🤖 **Sesja Claude Code — czat jak w terminalu**\n` +
-      `• Pisz bezpośrednio tutaj — każda wiadomość trafia do Claude\n` +
-      `• Widoczne myślenie Claude (💭) i pełna historia rozmowy\n` +
-      `• \`!exit\` — zakończ i zarchiwizuj wątek\n` +
-      `• Sesja wygasa po ${SESSION_TIMEOUT / 60000} min nieaktywności\n` +
-      `${"─".repeat(44)}`
-    );
+    await thread.send({
+      embeds: [new EmbedBuilder()
+        .setColor(0x6366f1)
+        .setTitle("🤖 Sesja Claude Code")
+        .setDescription(
+          "• Pisz bezpośrednio — każda wiadomość trafia do Claude\n" +
+          "• Widoczne: 💭 myślenie · 🔧 narzędzia · 📤 wyniki · 💰 koszt\n" +
+          "• `!exit` lub przycisk **🚪 Zakończ** — zamknij sesję"
+        )
+        .setFooter({ text: `Skip-permissions aktywny · Wygasa po ${SESSION_TIMEOUT / 60000}min nieaktywności` })
+      ],
+      components: [controlRow()],
+    });
 
     await thread.sendTyping();
     const typing = setInterval(() => thread.sendTyping(), 8000);
     try {
-      const result = await runClaude(initialPrompt);
+      const result = await streamClaudeToThread(thread, initialPrompt, session);
       clearInterval(typing);
-      const session = claudeSessions.get(thread.id);
-      if (session) {
-        session.history.push({ role: "user", content: initialPrompt });
-        session.history.push({ role: "assistant", content: result.response });
-        session.lastActivity = Date.now();
-      }
-      await sendClaudeResult(thread, result);
+      session.history.push({ role: "user", content: initialPrompt });
+      session.history.push({ role: "assistant", content: result.response });
+      session.lastActivity = Date.now();
     } catch (e) {
       clearInterval(typing);
       await thread.send(`❌ Błąd Claude: ${e.message.slice(0, 500)}`);
@@ -364,15 +505,46 @@ const commands = {
           "`!run <komenda>` — wykonaj komendę bash",
         ].join("\n"), inline: false },
         { name: "🤖 Claude Code (admin)", value: [
-          "`!claude <prompt>` — otwiera wątek czatu z Claude",
-          "W wątku: pisz bezpośrednio | `!exit` zakończ sesję",
-          "Widać: myślenie Claude (💭) + pełna historia",
+          "`!claude <prompt>` — otwiera wątek z pełnym UI Claude CLI",
+          "W wątku: pisz bezpośrednio | przyciski: ⏹ Stop 🔄 Wyczyść 🚪 Zakończ",
+          "Widać: 💭 myślenie · 🔧 narzędzia · 📤 wyniki · 💰 koszt",
         ].join("\n"), inline: false },
       )
-      .setFooter({ text: `Bot: ${process.env.AGENT_URL?.replace("http://","").split(":")[0] || "localhost"}` });
+      .setFooter({ text: `Bot: ${process.env.AGENT_URL?.replace("http://", "").split(":")[0] || "localhost"}` });
     await msg.channel.send({ embeds: [embed] });
   },
 };
+
+// ── Button interaction handler ────────────────────────────────────────────────
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith("claude_")) return;
+
+  const session = claudeSessions.get(interaction.channelId);
+  if (!session) {
+    return interaction.reply({ content: "❌ Brak aktywnej sesji.", ephemeral: true });
+  }
+
+  if (interaction.customId === "claude_stop") {
+    if (session.proc) {
+      session.proc.kill();
+      session.proc = null;
+      await interaction.reply({ content: "⏹ Zatrzymano aktywny proces Claude.", ephemeral: true });
+    } else {
+      await interaction.reply({ content: "ℹ️ Brak aktywnego procesu.", ephemeral: true });
+    }
+
+  } else if (interaction.customId === "claude_clear") {
+    session.history = [];
+    await interaction.reply({ content: "🔄 Historia rozmowy wyczyszczona.", ephemeral: true });
+
+  } else if (interaction.customId === "claude_exit") {
+    if (session.proc) session.proc.kill();
+    claudeSessions.delete(interaction.channelId);
+    await interaction.reply({ content: "👋 Sesja Claude zakończona." });
+    try { await interaction.channel.setArchived(true); } catch {}
+  }
+});
 
 // ── Message handler ───────────────────────────────────────────────────────────
 client.on("messageCreate", async (msg) => {
@@ -383,24 +555,24 @@ client.on("messageCreate", async (msg) => {
     const session = claudeSessions.get(msg.channelId);
 
     if (msg.content.trim().toLowerCase() === "!exit") {
+      if (session.proc) session.proc.kill();
       claudeSessions.delete(msg.channelId);
       await msg.reply("👋 Sesja Claude zakończona.");
       try { await msg.channel.setArchived(true); } catch {}
       return;
     }
 
-    if (msg.content.startsWith("!")) return; // ignore other !commands inside thread
+    if (msg.content.startsWith("!")) return;
 
     session.lastActivity = Date.now();
     await msg.channel.sendTyping();
     const typing = setInterval(() => msg.channel.sendTyping(), 8000);
     try {
       const fullPrompt = buildPromptWithHistory(session.history, msg.content);
-      const result = await runClaude(fullPrompt);
+      const result = await streamClaudeToThread(msg.channel, fullPrompt, session);
       clearInterval(typing);
       session.history.push({ role: "user", content: msg.content });
       session.history.push({ role: "assistant", content: result.response });
-      await sendClaudeResult(msg.channel, result);
     } catch (e) {
       clearInterval(typing);
       await msg.channel.send(`❌ Błąd Claude: ${e.message.slice(0, 500)}`);
