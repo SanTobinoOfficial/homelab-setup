@@ -1,18 +1,34 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ThreadAutoArchiveDuration,
+} = require("discord.js");
 const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
 const execFileAsync = promisify(execFile);
 
-const DISCORD_TOKEN     = process.env.DISCORD_TOKEN;
-const ALLOWED_CHANNEL   = process.env.ALLOWED_CHANNEL_ID;
-const ADMIN_USER_ID     = process.env.ADMIN_USER_ID;
-const AGENT_URL         = process.env.AGENT_URL || "http://localhost:9090";
-const AGENT_API_KEY     = process.env.AGENT_API_KEY || "";
-const CLAUDE_CLI        = process.env.CLAUDE_CLI || "claude";
-const CLAUDE_TIMEOUT    = parseInt(process.env.CLAUDE_TIMEOUT || "120") * 1000;
+const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
+const ALLOWED_CHANNEL = process.env.ALLOWED_CHANNEL_ID;
+const ADMIN_USER_ID   = process.env.ADMIN_USER_ID;
+const AGENT_URL       = process.env.AGENT_URL       || "http://localhost:9090";
+const AGENT_API_KEY   = process.env.AGENT_API_KEY   || "";
+const CLAUDE_CLI      = process.env.CLAUDE_CLI      || "claude";
+const CLAUDE_TIMEOUT  = parseInt(process.env.CLAUDE_TIMEOUT         || "120") * 1000;
+const SESSION_TIMEOUT = parseInt(process.env.CLAUDE_SESSION_TIMEOUT || "30")  * 60 * 1000;
 
 if (!DISCORD_TOKEN) { console.error("DISCORD_TOKEN not set"); process.exit(1); }
+
+// Active Claude sessions: threadId → {history: [{role, content}], lastActivity}
+const claudeSessions = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of claudeSessions) {
+    if (now - s.lastActivity > SESSION_TIMEOUT) claudeSessions.delete(id);
+  }
+}, 5 * 60 * 1000);
 
 const client = new Client({
   intents: [
@@ -46,10 +62,9 @@ function chunk(str, size = 1900) {
   return parts;
 }
 
-async function sendLong(msg, text, lang = "") {
-  const parts = chunk(text);
-  for (let i = 0; i < parts.length; i++) {
-    await msg.channel.send(`\`\`\`${lang}\n${parts[i]}\n\`\`\``);
+async function sendLong(target, text, lang = "") {
+  for (const part of chunk(text)) {
+    await target.send(`\`\`\`${lang}\n${part}\n\`\`\``);
   }
 }
 
@@ -60,52 +75,126 @@ function uptime(s) {
 
 function statusEmoji(s) { return s === "running" ? "🟢" : "🔴"; }
 
+// ── Claude runner (stream-json → thinking + response) ────────────────────────
+async function runClaude(fullPrompt) {
+  return new Promise((resolve, reject) => {
+    let thinking = "";
+    let response = "";
+    let rawOutput = "";
+    let buffer = "";
+
+    const proc = spawn(CLAUDE_CLI, [
+      "--print",
+      "--output-format", "stream-json",
+      "--verbose",
+      fullPrompt,
+    ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT });
+
+    proc.stdout.on("data", d => {
+      const text = d.toString();
+      rawOutput += text;
+      buffer += text;
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === "assistant" && Array.isArray(ev.message?.content)) {
+            for (const block of ev.message.content) {
+              if (block.type === "thinking") thinking += block.thinking + "\n";
+              if (block.type === "text") response += block.text;
+            }
+          } else if (ev.type === "result" && ev.result && !response) {
+            response = ev.result;
+          }
+        } catch {
+          // Not JSON line — treat as plain text (older CLI versions)
+          if (!thinking && !response) response += line + "\n";
+        }
+      }
+    });
+
+    proc.on("close", code => {
+      if (buffer.trim()) {
+        try {
+          const ev = JSON.parse(buffer);
+          if (ev.type === "result" && !response) response = ev.result;
+        } catch {
+          if (!response) response += buffer;
+        }
+      }
+      if (!response && rawOutput) {
+        // Strip JSON lines, keep plain text lines as fallback
+        response = rawOutput.split("\n")
+          .filter(l => { try { JSON.parse(l); return false; } catch { return l.trim(); } })
+          .join("\n").trim();
+      }
+      if (code === 0 || response) {
+        resolve({ thinking: thinking.trim(), response: response.trim() || "(brak odpowiedzi)" });
+      } else {
+        reject(new Error(`Claude zakończył z kodem ${code}`));
+      }
+    });
+    proc.on("error", reject);
+  });
+}
+
+function buildPromptWithHistory(history, userMessage) {
+  const recent = history.slice(-10); // keep last 5 turns
+  if (recent.length === 0) return userMessage;
+  const ctx = recent.map(h => `${h.role === "user" ? "User" : "Claude"}: ${h.content}`).join("\n\n");
+  return (
+    `Kontynuujesz rozmowę. Historia:\n\n${ctx}\n\n` +
+    `User: ${userMessage}\n\n` +
+    `Odpowiedz na ostatnią wiadomość biorąc pod uwagę powyższy kontekst.`
+  );
+}
+
+async function sendClaudeResult(target, result) {
+  if (result.thinking) {
+    const t = result.thinking.slice(0, 1800);
+    const suffix = result.thinking.length > 1800 ? "\n[...]" : "";
+    await target.send(`💭 **Myślenie Claude:**\n\`\`\`\n${t}${suffix}\n\`\`\``);
+  }
+  const parts = chunk(result.response);
+  for (let i = 0; i < parts.length; i++) {
+    await target.send(i === 0 ? `🤖 **Claude:**\n${parts[i]}` : parts[i]);
+  }
+}
+
 // ── Command handlers ──────────────────────────────────────────────────────────
 const commands = {
 
   async status(msg) {
-    const typing = await msg.channel.sendTyping();
+    await msg.channel.sendTyping();
     try {
       const [metrics, services, storage] = await Promise.all([
         agentFetch("/api/metrics"),
         agentFetch("/api/services"),
         agentFetch("/api/storage"),
       ]);
-
       const embed = new EmbedBuilder()
         .setColor(0x6366f1)
         .setTitle("🖥️ HomeLab Server Status")
         .setTimestamp()
         .addFields(
-          {
-            name: "📊 Metryki",
-            value: [
-              `CPU: **${metrics.cpu_percent ?? "?"}%**`,
-              `RAM: **${metrics.ram_used_mb ?? "?"}/${metrics.ram_total_mb ?? "?"}MB** (${metrics.ram_percent ?? "?"}%)`,
-              `Temp: **${metrics.temp_celsius != null ? metrics.temp_celsius + "°C" : "N/A"}**`,
-              `Uptime: **${metrics.uptime_seconds ? uptime(metrics.uptime_seconds) : "?"}**`,
-            ].join("\n"),
-            inline: true,
-          },
-          {
-            name: "💾 Storage",
-            value: [
-              `Zajęte: **${storage.disk_used_gb ?? "?"}GB**`,
-              `Wolne: **${storage.disk_free_gb ?? "?"}GB**`,
-              `Łącznie: **${storage.disk_total_gb ?? "?"}GB**`,
-              `Użycie: **${storage.disk_percent ?? "?"}%**`,
-            ].join("\n"),
-            inline: true,
-          },
-          {
-            name: "🐳 Usługi",
-            value: Array.isArray(services)
-              ? services.map(s => `${statusEmoji(s.status)} \`${s.name}\` — ${s.status}`).join("\n") || "Brak"
-              : "Błąd",
-            inline: false,
-          }
+          { name: "📊 Metryki", value: [
+            `CPU: **${metrics.cpu_percent ?? "?"}%**`,
+            `RAM: **${metrics.ram_used_mb ?? "?"}/${metrics.ram_total_mb ?? "?"}MB** (${metrics.ram_percent ?? "?"}%)`,
+            `Temp: **${metrics.temp_celsius != null ? metrics.temp_celsius + "°C" : "N/A"}**`,
+            `Uptime: **${metrics.uptime_seconds ? uptime(metrics.uptime_seconds) : "?"}**`,
+          ].join("\n"), inline: true },
+          { name: "💾 Storage", value: [
+            `Zajęte: **${storage.disk_used_gb ?? "?"}GB**`,
+            `Wolne: **${storage.disk_free_gb ?? "?"}GB**`,
+            `Łącznie: **${storage.disk_total_gb ?? "?"}GB**`,
+            `Użycie: **${storage.disk_percent ?? "?"}%**`,
+          ].join("\n"), inline: true },
+          { name: "🐳 Usługi", value: Array.isArray(services)
+            ? services.map(s => `${statusEmoji(s.status)} \`${s.name}\` — ${s.status}`).join("\n") || "Brak"
+            : "Błąd", inline: false },
         );
-
       await msg.channel.send({ embeds: [embed] });
     } catch (e) {
       await msg.reply(`❌ Błąd połączenia z serwerem: ${e.message}`);
@@ -145,12 +234,9 @@ const commands = {
     if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
     const svc = args[0];
     if (!svc) return msg.reply("Użycie: `!restart <nazwa_usługi>`");
-    const typing = msg.channel.sendTyping();
     try {
       const r = await agentFetch("/api/services/restart", "POST", { service: svc });
-      r.success
-        ? await msg.reply(`✅ \`${svc}\` zrestartowany`)
-        : await msg.reply(`❌ Błąd: ${r.error || r.output}`);
+      r.success ? await msg.reply(`✅ \`${svc}\` zrestartowany`) : await msg.reply(`❌ Błąd: ${r.error || r.output}`);
     } catch (e) {
       await msg.reply(`❌ ${e.message}`);
     }
@@ -162,9 +248,7 @@ const commands = {
     if (!svc) return msg.reply("Użycie: `!stop <nazwa_usługi>`");
     try {
       const r = await agentFetch("/api/services/stop", "POST", { service: svc });
-      r.success
-        ? await msg.reply(`⏹️ \`${svc}\` zatrzymany`)
-        : await msg.reply(`❌ Błąd: ${r.error}`);
+      r.success ? await msg.reply(`⏹️ \`${svc}\` zatrzymany`) : await msg.reply(`❌ Błąd: ${r.error}`);
     } catch (e) {
       await msg.reply(`❌ ${e.message}`);
     }
@@ -172,13 +256,12 @@ const commands = {
 
   async logs(msg, args) {
     if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
-    const svc = args[0];
-    const lines = parseInt(args[1] || "50");
+    const svc = args[0], lines = parseInt(args[1] || "50");
     if (!svc) return msg.reply("Użycie: `!logs <usługa> [liczba_linii]`");
     try {
       const r = await agentFetch(`/api/logs/${svc}`);
       const text = (r.logs || []).filter(Boolean).slice(-lines).join("\n") || "Brak logów";
-      await sendLong(msg, `=== Logi: ${svc} ===\n${text}`, "");
+      await sendLong(msg.channel, `=== Logi: ${svc} ===\n${text}`);
     } catch (e) {
       await msg.reply(`❌ ${e.message}`);
     }
@@ -199,58 +282,65 @@ const commands = {
     }
   },
 
-  // Run Claude Code non-interactively
+  // Open a Claude chat thread — each message in the thread continues the conversation
   async claude(msg, args) {
     if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
-    const prompt = args.join(" ");
-    if (!prompt) return msg.reply("Użycie: `!claude <twój prompt>`");
+    const initialPrompt = args.join(" ");
+    if (!initialPrompt) return msg.reply(
+      "Użycie: `!claude <prompt>` — otwiera wątek czatu z Claude\n" +
+      "W wątku pisz bezpośrednio. `!exit` kończy sesję."
+    );
 
-    await msg.reply(`🤖 Wysyłam do Claude Code:\n> ${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`);
-    await msg.channel.sendTyping();
-
-    const waiting = setInterval(() => msg.channel.sendTyping(), 8000);
+    let thread;
     try {
-      const result = await new Promise((resolve, reject) => {
-        let output = "";
-        let errout = "";
-        const proc = spawn(CLAUDE_CLI, ["--print", prompt], {
-          timeout: CLAUDE_TIMEOUT,
-          cwd: "/opt/homelab",
-        });
-        proc.stdout.on("data", d => (output += d));
-        proc.stderr.on("data", d => (errout += d));
-        proc.on("close", code => {
-          if (code === 0) resolve(output || "(brak odpowiedzi)");
-          else reject(new Error(errout || `Kod wyjścia: ${code}`));
-        });
-        proc.on("error", reject);
+      thread = await msg.startThread({
+        name: `🤖 Claude: ${initialPrompt.slice(0, 80)}`,
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       });
-      clearInterval(waiting);
-      await sendLong(msg, `**Claude Code odpowiedział:**\n${result}`);
     } catch (e) {
-      clearInterval(waiting);
-      await msg.reply(`❌ Claude Code error: ${e.message.slice(0, 500)}`);
+      return msg.reply(`❌ Nie mogę utworzyć wątku: ${e.message}`);
+    }
+
+    claudeSessions.set(thread.id, { history: [], lastActivity: Date.now() });
+
+    await thread.send(
+      `🤖 **Sesja Claude Code — czat jak w terminalu**\n` +
+      `• Pisz bezpośrednio tutaj — każda wiadomość trafia do Claude\n` +
+      `• Widoczne myślenie Claude (💭) i pełna historia rozmowy\n` +
+      `• \`!exit\` — zakończ i zarchiwizuj wątek\n` +
+      `• Sesja wygasa po ${SESSION_TIMEOUT / 60000} min nieaktywności\n` +
+      `${"─".repeat(44)}`
+    );
+
+    await thread.sendTyping();
+    const typing = setInterval(() => thread.sendTyping(), 8000);
+    try {
+      const result = await runClaude(initialPrompt);
+      clearInterval(typing);
+      const session = claudeSessions.get(thread.id);
+      if (session) {
+        session.history.push({ role: "user", content: initialPrompt });
+        session.history.push({ role: "assistant", content: result.response });
+        session.lastActivity = Date.now();
+      }
+      await sendClaudeResult(thread, result);
+    } catch (e) {
+      clearInterval(typing);
+      await thread.send(`❌ Błąd Claude: ${e.message.slice(0, 500)}`);
     }
   },
 
-  // Run shell command (admin only, use carefully)
   async run(msg, args) {
     if (!isAdmin(msg)) return msg.reply("❌ Brak uprawnień");
     const cmd = args.join(" ");
     if (!cmd) return msg.reply("Użycie: `!run <komenda>`");
-
     const BLOCKED = ["rm -rf /", "format", "dd if=", "mkfs", "> /dev/"];
     if (BLOCKED.some(b => cmd.includes(b))) return msg.reply("❌ Zablokowane polecenie");
-
     try {
-      const { stdout, stderr } = await execFileAsync("bash", ["-c", cmd], {
-        timeout: 30000,
-        cwd: "/opt/homelab",
-      });
-      const out = (stdout + stderr).trim() || "(brak output)";
-      await sendLong(msg, `$ ${cmd}\n${out}`, "bash");
+      const { stdout, stderr } = await execFileAsync("bash", ["-c", cmd], { timeout: 30000, cwd: "/opt/homelab" });
+      await sendLong(msg.channel, `$ ${cmd}\n${(stdout + stderr).trim() || "(brak output)"}`, "bash");
     } catch (e) {
-      await sendLong(msg, `$ ${cmd}\nBłąd: ${e.message}`, "bash");
+      await sendLong(msg.channel, `$ ${cmd}\nBłąd: ${e.message}`, "bash");
     }
   },
 
@@ -273,11 +363,12 @@ const commands = {
           "`!run <komenda>` — wykonaj komendę bash",
         ].join("\n"), inline: false },
         { name: "🤖 Claude Code (admin)", value: [
-          "`!claude <prompt>` — wyślij prompt do Claude Code CLI",
-          "Przykład: `!claude sprawdź status usług i powiedz co nie działa`",
+          "`!claude <prompt>` — otwiera wątek czatu z Claude",
+          "W wątku: pisz bezpośrednio | `!exit` zakończ sesję",
+          "Widać: myślenie Claude (💭) + pełna historia",
         ].join("\n"), inline: false },
       )
-      .setFooter({ text: `Bot działa na: ${process.env.AGENT_URL?.replace("http://","").split(":")[0] || "localhost"}` });
+      .setFooter({ text: `Bot: ${process.env.AGENT_URL?.replace("http://","").split(":")[0] || "localhost"}` });
     await msg.channel.send({ embeds: [embed] });
   },
 };
@@ -285,12 +376,43 @@ const commands = {
 // ── Message handler ───────────────────────────────────────────────────────────
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
+
+  // Handle messages inside an active Claude session thread
+  if (claudeSessions.has(msg.channelId)) {
+    const session = claudeSessions.get(msg.channelId);
+
+    if (msg.content.trim().toLowerCase() === "!exit") {
+      claudeSessions.delete(msg.channelId);
+      await msg.reply("👋 Sesja Claude zakończona.");
+      try { await msg.channel.setArchived(true); } catch {}
+      return;
+    }
+
+    if (msg.content.startsWith("!")) return; // ignore other !commands inside thread
+
+    session.lastActivity = Date.now();
+    await msg.channel.sendTyping();
+    const typing = setInterval(() => msg.channel.sendTyping(), 8000);
+    try {
+      const fullPrompt = buildPromptWithHistory(session.history, msg.content);
+      const result = await runClaude(fullPrompt);
+      clearInterval(typing);
+      session.history.push({ role: "user", content: msg.content });
+      session.history.push({ role: "assistant", content: result.response });
+      await sendClaudeResult(msg.channel, result);
+    } catch (e) {
+      clearInterval(typing);
+      await msg.channel.send(`❌ Błąd Claude: ${e.message.slice(0, 500)}`);
+    }
+    return;
+  }
+
+  // Normal channel — only listen to allowed channel
   if (ALLOWED_CHANNEL && msg.channelId !== ALLOWED_CHANNEL) return;
   if (!msg.content.startsWith("!")) return;
 
   const [rawCmd, ...args] = msg.content.slice(1).trim().split(/\s+/);
   const cmd = rawCmd.toLowerCase();
-
   if (commands[cmd]) {
     try {
       await commands[cmd](msg, args);
