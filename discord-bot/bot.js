@@ -246,7 +246,7 @@ function runClaudePrint(fullPrompt, session) {
     let buffer = "", errOut = "";
 
     const proc = spawn(CLAUDE_CLI, [
-      "--print", "--output-format", "stream-json", fullPrompt,
+      "--print", "--output-format", "stream-json", "--verbose", fullPrompt,
     ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT, stdio: ["ignore", "pipe", "pipe"] });
 
     session.proc = proc;
