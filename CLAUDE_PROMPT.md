@@ -1,4 +1,4 @@
-# HOMELAB SERVER NODE — CLAUDE CODE MAIN PROMPT
+﻿# HOMELAB SERVER NODE — CLAUDE CODE MAIN PROMPT
 # Laptop ASUS — Pełna instrukcja konfiguracji
 # Wersja: 1.0 | Admin PC: DESKTOP-PC-TOBI (192.168.1.212, Windows 11)
 
@@ -713,7 +713,7 @@ echo "=== DOSTĘP DO USŁUG ==="
 IP=$(hostname -I | awk '{print $1}')
 echo "Nextcloud:  http://$IP:8080"
 echo "Jellyfin:   http://$IP:8096"
-echo "AdGuard:    http://$IP:3001"
+echo "Pi-hole:    http://$IP:8053/admin"
 echo "Portainer:  http://$IP:9000"
 echo "Traefik:    http://$IP:8090"
 echo "Node Agent: http://$IP:9090"
@@ -731,13 +731,13 @@ echo "6. Otwórz http://localhost:3000"
 
 ## ROZWIĄZYWANIE PROBLEMÓW
 
-### Port 53 zajęty (AdGuard)
+### Port 53 zajęty (Pi-hole)
 ```bash
 sudo systemctl stop systemd-resolved
 sudo systemctl disable systemd-resolved
 sudo rm /etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-docker compose restart adguard
+docker compose restart pihole
 ```
 
 ### Nextcloud nie startuje

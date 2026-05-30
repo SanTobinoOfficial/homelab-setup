@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pl" class="dark">
 <head>
   <meta charset="UTF-8">
@@ -7,357 +7,394 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = { darkMode: 'class' }</script>
   <style>
-    body { background: #0f1117; font-family: 'Inter', system-ui, sans-serif; }
-    .card { background: #1a1d27; border: 1px solid #2a2d3a; }
-    .pulse-dot { animation: pulse 2s infinite; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    .log-line { font-family: 'Courier New', monospace; font-size: 12px; }
-    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: #1a1d27; }
-    ::-webkit-scrollbar-thumb { background: #3a3d4a; border-radius: 2px; }
-    .service-row:hover { background: rgba(255,255,255,0.03); }
+    body { background: #0a0c12; font-family: system-ui, sans-serif; }
+    .card { background: #13161f; border: 1px solid #1e2130; border-radius: 12px; }
+    .card-glow:hover { border-color: #3b3f58; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .log-line { font-family: monospace; font-size: 11px; line-height: 1.5; }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2d40; border-radius: 2px; }
+    .svc-row:hover { background: rgba(255,255,255,0.02); }
+    .badge-run { background:#0d2318; color:#4ade80; border:1px solid #166534; }
+    .badge-stop { background:#2d1010; color:#f87171; border:1px solid #7f1d1d; }
+    .badge-restart { background:#1f1a08; color:#fbbf24; border:1px solid #78350f; }
+    .metric-num { font-size:2rem; font-weight:700; line-height:1; }
+    .progress { height:3px; background:#1e2130; border-radius:99px; overflow:hidden; margin-top:8px; }
+    .progress-fill { height:100%; border-radius:99px; transition:width .6s ease; }
+    .tab-btn { padding:6px 14px; border-radius:8px; font-size:13px; cursor:pointer; transition:all .15s; color:#6b7280; }
+    .tab-btn.active { background:#1e2130; color:#e5e7eb; }
+    #countdown { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body class="text-gray-100 min-h-screen">
 
-<!-- Header -->
-<header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-10" style="background:#0f1117">
+<header class="border-b border-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-20" style="background:#0a0c12cc;backdrop-filter:blur(12px)">
   <div class="flex items-center gap-3">
-    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-sm font-bold">H</div>
-    <span class="text-lg font-semibold">HomeLab Dashboard</span>
-    <span class="text-xs text-gray-500 ml-2" id="laptop-ip">Loading...</span>
+    <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold">H</div>
+    <span class="font-semibold">HomeLab</span>
+    <span class="text-xs text-gray-600 font-mono" id="server-ip"></span>
   </div>
   <div class="flex items-center gap-4">
-    <div id="server-status" class="flex items-center gap-2 text-sm">
-      <div class="w-2 h-2 rounded-full bg-gray-500"></div>
-      <span class="text-gray-400">Connecting...</span>
+    <div id="status-dot" class="flex items-center gap-1.5 text-xs">
+      <div class="w-1.5 h-1.5 rounded-full bg-gray-600 pulse"></div>
+      <span class="text-gray-500">connecting</span>
     </div>
-    <span class="text-xs text-gray-600" id="last-update">—</span>
-    <button onclick="refresh()" class="text-xs px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 transition">↻ Refresh</button>
+    <span class="text-xs text-gray-700" id="last-update"></span>
+    <span class="text-xs text-gray-600">refresh <span id="countdown" class="text-gray-500">10</span>s</span>
+    <button onclick="refresh(true)" class="text-xs px-3 py-1.5 rounded-lg bg-gray-900 hover:bg-gray-800 border border-gray-800 transition">Refresh</button>
   </div>
 </header>
 
-<main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+<main class="max-w-7xl mx-auto px-6 py-5 space-y-5">
 
-  <!-- Metrics Row -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <div class="card rounded-xl p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">CPU</div>
-      <div class="text-3xl font-bold" id="cpu-val">—</div>
-      <div class="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div id="cpu-bar" class="h-full bg-indigo-500 rounded-full transition-all duration-500" style="width:0%"></div>
-      </div>
+  <!-- Metrics row -->
+  <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+    <div class="card card-glow p-4 transition">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-3">CPU</div>
+      <div class="metric-num" id="v-cpu">--</div>
+      <div class="progress"><div id="b-cpu" class="progress-fill bg-indigo-500" style="width:0"></div></div>
     </div>
-    <div class="card rounded-xl p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">RAM</div>
-      <div class="text-3xl font-bold" id="ram-val">—</div>
-      <div class="text-xs text-gray-500 mt-1" id="ram-detail">—</div>
-      <div class="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div id="ram-bar" class="h-full bg-violet-500 rounded-full transition-all duration-500" style="width:0%"></div>
-      </div>
+    <div class="card card-glow p-4 transition">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-3">RAM</div>
+      <div class="metric-num" id="v-ram">--</div>
+      <div class="text-xs text-gray-600 mt-1" id="v-ram-detail"></div>
+      <div class="progress"><div id="b-ram" class="progress-fill bg-violet-500" style="width:0"></div></div>
     </div>
-    <div class="card rounded-xl p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">DYSK (SSD)</div>
-      <div class="text-3xl font-bold" id="disk-val">—</div>
-      <div class="text-xs text-gray-500 mt-1" id="disk-detail">—</div>
-      <div class="mt-2 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div id="disk-bar" class="h-full bg-emerald-500 rounded-full transition-all duration-500" style="width:0%"></div>
-      </div>
+    <div class="card card-glow p-4 transition">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-3">DYSK</div>
+      <div class="metric-num" id="v-disk">--</div>
+      <div class="text-xs text-gray-600 mt-1" id="v-disk-detail"></div>
+      <div class="progress"><div id="b-disk" class="progress-fill bg-emerald-500" style="width:0"></div></div>
     </div>
-    <div class="card rounded-xl p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wide mb-2">TEMP / UPTIME</div>
-      <div class="text-3xl font-bold" id="temp-val">—</div>
-      <div class="text-xs text-gray-500 mt-1" id="uptime-val">—</div>
+    <div class="card card-glow p-4 transition">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-3">TEMP</div>
+      <div class="metric-num" id="v-temp">--</div>
+      <div class="text-xs text-gray-600 mt-1" id="v-uptime"></div>
+    </div>
+    <!-- Pi-hole card -->
+    <div class="card card-glow p-4 transition" id="pihole-card">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs text-gray-600 uppercase tracking-widest">Pi-hole</div>
+        <div id="pihole-status" class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
+      </div>
+      <div class="metric-num text-green-400" id="v-pihole-pct">--</div>
+      <div class="text-xs text-gray-600 mt-1" id="v-pihole-blocked">zablokowanych</div>
+      <div class="progress"><div id="b-pihole" class="progress-fill bg-green-500" style="width:0"></div></div>
+      <div class="text-xs text-gray-700 mt-2" id="v-pihole-total"></div>
+    </div>
+  </div>
+
+  <!-- Pi-hole extra stats -->
+  <div class="grid grid-cols-3 gap-3" id="pihole-row" style="display:none!important">
+    <div class="card p-3 text-center">
+      <div class="text-xs text-gray-600 mb-1">Zapytania dziS</div>
+      <div class="text-xl font-bold" id="v-ph-queries">--</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-xs text-gray-600 mb-1">Zablokowane</div>
+      <div class="text-xl font-bold text-green-400" id="v-ph-blocked">--</div>
+    </div>
+    <div class="card p-3 text-center">
+      <div class="text-xs text-gray-600 mb-1">Domen na liscie</div>
+      <div class="text-xl font-bold text-indigo-400" id="v-ph-domains">--</div>
     </div>
   </div>
 
   <!-- Services + Logs -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-    <!-- Services -->
-    <div class="lg:col-span-2 card rounded-xl overflow-hidden">
-      <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-        <h2 class="font-semibold">Usługi</h2>
-        <span class="text-xs text-gray-500" id="services-count">—</span>
+    <div class="lg:col-span-2 card overflow-hidden">
+      <div class="px-5 py-3.5 border-b border-gray-900 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <h2 class="font-medium text-sm">Uslugi</h2>
+          <span class="text-xs text-gray-600 font-mono" id="svc-count"></span>
+        </div>
+        <div class="flex gap-1">
+          <button onclick="filterSvc('all')" id="f-all" class="tab-btn active">Wszystkie</button>
+          <button onclick="filterSvc('running')" id="f-run" class="tab-btn">Running</button>
+          <button onclick="filterSvc('stopped')" id="f-stop" class="tab-btn">Stopped</button>
+        </div>
       </div>
-      <div id="services-table" class="divide-y divide-gray-800/50">
-        <div class="px-5 py-8 text-center text-gray-600 text-sm">Ładowanie...</div>
-      </div>
+      <div id="svc-table" class="divide-y divide-gray-900/80"></div>
     </div>
 
-    <!-- Logs -->
-    <div class="card rounded-xl overflow-hidden flex flex-col">
-      <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-        <h2 class="font-semibold">Logi</h2>
-        <select id="log-service" onchange="loadLogs()" class="text-xs bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300">
-          <option value="">-- wybierz usługę --</option>
+    <div class="card overflow-hidden flex flex-col">
+      <div class="px-5 py-3.5 border-b border-gray-900 flex items-center justify-between">
+        <h2 class="font-medium text-sm">Logi</h2>
+        <select id="log-sel" onchange="loadLogs()" class="text-xs bg-gray-900 border border-gray-800 rounded-lg px-2 py-1 text-gray-400">
+          <option value="">-- usluga --</option>
         </select>
       </div>
-      <div id="log-output" class="flex-1 overflow-y-auto p-3 space-y-0.5 text-gray-400 min-h-48 max-h-80">
-        <div class="text-gray-600 text-xs text-center pt-4">Wybierz usługę</div>
+      <div id="log-out" class="flex-1 overflow-y-auto p-3 min-h-56 max-h-96 space-y-0">
+        <div class="text-gray-700 text-xs text-center pt-6">Wybierz usluge</div>
       </div>
     </div>
   </div>
 
   <!-- Storage -->
-  <div class="card rounded-xl p-5">
-    <h2 class="font-semibold mb-4">Storage (/mnt/ssd)</h2>
-    <div class="flex items-center gap-6">
-      <div class="flex-1">
-        <div class="flex justify-between text-sm mb-2">
-          <span class="text-gray-400">Zajęte: <span id="storage-used" class="text-white font-medium">—</span></span>
-          <span class="text-gray-400">Wolne: <span id="storage-free" class="text-white font-medium">—</span></span>
-          <span class="text-gray-400">Łącznie: <span id="storage-total" class="text-white font-medium">—</span></span>
-        </div>
-        <div class="h-4 bg-gray-800 rounded-full overflow-hidden">
-          <div id="storage-bar" class="h-full rounded-full transition-all duration-700"
-               style="width:0%; background: linear-gradient(90deg, #6366f1, #8b5cf6)"></div>
-        </div>
-        <div class="text-right text-xs text-gray-500 mt-1" id="storage-pct">—</div>
-      </div>
+  <div class="card p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-medium text-sm">Storage /mnt/ssd</h2>
+      <span class="text-xs text-gray-600" id="v-stor-pct"></span>
+    </div>
+    <div class="progress" style="height:6px">
+      <div id="b-stor" class="progress-fill" style="width:0;background:linear-gradient(90deg,#6366f1,#8b5cf6)"></div>
+    </div>
+    <div class="flex justify-between text-xs text-gray-600 mt-2">
+      <span>Zajete: <span class="text-gray-400" id="v-stor-used"></span></span>
+      <span>Wolne: <span class="text-gray-400" id="v-stor-free"></span></span>
+      <span>Lacznie: <span class="text-gray-400" id="v-stor-total"></span></span>
     </div>
   </div>
 
-  <!-- Quick Actions -->
-  <div class="card rounded-xl p-5">
-    <h2 class="font-semibold mb-4">Szybkie akcje</h2>
-    <div class="flex flex-wrap gap-2">
-      <a id="link-nextcloud" href="#" target="_blank"
-         class="px-4 py-2 rounded-lg bg-blue-900/30 hover:bg-blue-900/50 border border-blue-800/50 text-blue-300 text-sm transition">
-        ☁ Nextcloud
-      </a>
-      <a id="link-jellyfin" href="#" target="_blank"
-         class="px-4 py-2 rounded-lg bg-purple-900/30 hover:bg-purple-900/50 border border-purple-800/50 text-purple-300 text-sm transition">
-        🎬 Jellyfin
-      </a>
-      <a id="link-adguard" href="#" target="_blank"
-         class="px-4 py-2 rounded-lg bg-green-900/30 hover:bg-green-900/50 border border-green-800/50 text-green-300 text-sm transition">
-        🛡 AdGuard
-      </a>
-      <a id="link-portainer" href="#" target="_blank"
-         class="px-4 py-2 rounded-lg bg-orange-900/30 hover:bg-orange-900/50 border border-orange-800/50 text-orange-300 text-sm transition">
-        🐳 Portainer
-      </a>
-      <a id="link-traefik" href="#" target="_blank"
-         class="px-4 py-2 rounded-lg bg-gray-900/30 hover:bg-gray-800/50 border border-gray-700/50 text-gray-300 text-sm transition">
-        ↔ Traefik
-      </a>
+  <!-- Quick links -->
+  <div class="card p-4">
+    <h2 class="font-medium text-sm mb-3 text-gray-400">Szybkie linki</h2>
+    <div class="flex flex-wrap gap-2" id="quick-links">
+      <a class="qlink" data-port="8080" data-label="Nextcloud" data-color="blue" href="#" target="_blank"></a>
+      <a class="qlink" data-port="8096" data-label="Jellyfin" data-color="purple" href="#" target="_blank"></a>
+      <a class="qlink" data-port="8053" data-label="Pi-hole" data-color="green" data-path="/admin" href="#" target="_blank"></a>
+      <a class="qlink" data-port="9000" data-label="Portainer" data-color="orange" href="#" target="_blank"></a>
+      <a class="qlink" data-port="8888" data-label="Heimdall" data-color="pink" href="#" target="_blank"></a>
+      <a class="qlink" data-port="8090" data-label="Traefik" data-color="gray" href="#" target="_blank"></a>
+      <a class="qlink" data-port="9091" data-label="Authelia" data-color="red" href="#" target="_blank"></a>
+      <a class="qlink" data-port="19999" data-label="Netdata" data-color="yellow" href="#" target="_blank"></a>
     </div>
   </div>
 
 </main>
 
-<!-- Toast -->
-<div id="toast" class="fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium hidden transition-all"></div>
+<div id="toast" class="fixed bottom-5 right-5 px-4 py-2.5 rounded-xl text-sm font-medium opacity-0 transition-opacity duration-300 pointer-events-none"></div>
 
 <script>
-let laptopIp = '192.168.1.100';
+const COLORS = {
+  blue:'bg-blue-950 text-blue-300 border border-blue-900 hover:bg-blue-900',
+  purple:'bg-purple-950 text-purple-300 border border-purple-900 hover:bg-purple-900',
+  green:'bg-green-950 text-green-300 border border-green-900 hover:bg-green-900',
+  orange:'bg-orange-950 text-orange-300 border border-orange-900 hover:bg-orange-900',
+  pink:'bg-pink-950 text-pink-300 border border-pink-900 hover:bg-pink-900',
+  gray:'bg-gray-900 text-gray-300 border border-gray-800 hover:bg-gray-800',
+  red:'bg-red-950 text-red-300 border border-red-900 hover:bg-red-900',
+  yellow:'bg-yellow-950 text-yellow-300 border border-yellow-900 hover:bg-yellow-900',
+};
 
-function toast(msg, type = 'info') {
+let laptopIp = '';
+let allServices = [];
+let svcFilter = 'all';
+let countdownVal = 10;
+let countdownTimer;
+
+function toast(msg, type='info') {
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.className = `fixed bottom-6 right-6 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-    type === 'error' ? 'bg-red-900 text-red-200' :
-    type === 'success' ? 'bg-green-900 text-green-200' : 'bg-gray-800 text-gray-200'
-  }`;
-  t.classList.remove('hidden');
-  setTimeout(() => t.classList.add('hidden'), 3000);
+  t.className = `fixed bottom-5 right-5 px-4 py-2.5 rounded-xl text-sm font-medium transition-opacity duration-300 ${
+    type==='error'?'bg-red-950 text-red-300 border border-red-900':
+    type==='success'?'bg-green-950 text-green-300 border border-green-900':
+    'bg-gray-900 text-gray-300 border border-gray-800'}`;
+  t.style.opacity='1';
+  setTimeout(()=>t.style.opacity='0', 3000);
 }
 
-function bar(id, pct, warn = 75, danger = 90) {
+function pct2color(p, safe, warn) {
+  if(p>=warn) return '#ef4444';
+  if(p>=safe) return '#f59e0b';
+  return null;
+}
+
+function setBar(id, pct, defaultClass) {
   const el = document.getElementById(id);
-  if (!el) return;
-  el.style.width = pct + '%';
-  el.className = el.className.replace(/bg-\w+-\d+/, '');
-  if (pct >= danger) el.classList.add('bg-red-500');
-  else if (pct >= warn) el.classList.add('bg-yellow-500');
-  else el.classList.add(id === 'cpu-bar' ? 'bg-indigo-500' : id === 'ram-bar' ? 'bg-violet-500' : 'bg-emerald-500');
+  el.style.width = pct+'%';
+  const c = pct2color(pct, 75, 90);
+  el.style.background = c || '';
+  el.className = 'progress-fill transition-all duration-500 ' + (c ? '' : defaultClass);
 }
 
-function uptime(s) {
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
+function fmtUptime(s) {
+  const d=Math.floor(s/86400), h=Math.floor((s%86400)/3600), m=Math.floor((s%3600)/60);
+  if(d) return `${d}d ${h}h`;
+  if(h) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+function fmtNum(n) {
+  if(n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if(n>=1000) return (n/1000).toFixed(1)+'k';
+  return n;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function startCountdown() {
+  clearInterval(countdownTimer);
+  countdownVal = 10;
+  document.getElementById('countdown').textContent = countdownVal;
+  countdownTimer = setInterval(() => {
+    countdownVal--;
+    document.getElementById('countdown').textContent = countdownVal;
+    if(countdownVal <= 0) { clearInterval(countdownTimer); refresh(); }
+  }, 1000);
 }
 
 async function loadConfig() {
   try {
-    const r = await fetch('/api/config');
-    const d = await r.json();
-    laptopIp = d.laptop_ip || laptopIp;
-    document.getElementById('laptop-ip').textContent = `Server: ${laptopIp}`;
-    const links = {
-      'link-nextcloud': `http://${laptopIp}:8080`,
-      'link-jellyfin': `http://${laptopIp}:8096`,
-      'link-adguard': `http://${laptopIp}:3001`,
-      'link-portainer': `http://${laptopIp}:9000`,
-      'link-traefik': `http://${laptopIp}:8090`,
-    };
-    for (const [id, url] of Object.entries(links)) {
-      const el = document.getElementById(id);
-      if (el) el.href = url;
-    }
-  } catch {}
+    const d = await fetch('/api/config').then(r=>r.json());
+    laptopIp = d.laptop_ip || '192.168.1.100';
+    document.getElementById('server-ip').textContent = laptopIp;
+    document.querySelectorAll('.qlink').forEach(a => {
+      const port = a.dataset.port;
+      const path = a.dataset.path || '';
+      const label = a.dataset.label;
+      const color = a.dataset.color;
+      a.href = `http://${laptopIp}:${port}${path}`;
+      a.textContent = label;
+      a.className = `px-3 py-1.5 rounded-lg text-xs font-medium transition ${COLORS[color]||COLORS.gray}`;
+    });
+  } catch(e) {}
 }
 
-async function refresh() {
-  try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
+function filterSvc(f) {
+  svcFilter = f;
+  ['all','run','stop'].forEach(x => document.getElementById('f-'+x)?.classList.remove('active'));
+  document.getElementById('f-'+f)?.classList.add('active');
+  renderServices();
+}
 
-    const statusEl = document.getElementById('server-status');
-    if (!d.online) {
-      statusEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-red-500 pulse-dot"></div><span class="text-red-400">Offline</span>`;
-      document.getElementById('services-table').innerHTML =
-        '<div class="px-5 py-8 text-center text-red-500 text-sm">Brak połączenia z serwerem</div>';
-      return;
-    }
-    statusEl.innerHTML = `<div class="w-2 h-2 rounded-full bg-green-500 pulse-dot"></div><span class="text-green-400">Online</span>`;
-    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('pl-PL');
-
-    // Metrics
-    const m = d.metrics || {};
-    document.getElementById('cpu-val').textContent = (m.cpu_percent ?? '—') + '%';
-    bar('cpu-bar', m.cpu_percent || 0);
-
-    document.getElementById('ram-val').textContent = (m.ram_percent ?? '—') + '%';
-    document.getElementById('ram-detail').textContent = `${m.ram_used_mb ?? 0} / ${m.ram_total_mb ?? 0} MB`;
-    bar('ram-bar', m.ram_percent || 0);
-
-    document.getElementById('disk-val').textContent = (m.disk_percent ?? '—') + '%';
-    document.getElementById('disk-detail').textContent = `${m.disk_used_gb ?? 0} / ${m.disk_total_gb ?? 0} GB`;
-    bar('disk-bar', m.disk_percent || 0, 80, 95);
-
-    document.getElementById('temp-val').textContent = m.temp_celsius != null ? m.temp_celsius + '°C' : 'N/A';
-    document.getElementById('uptime-val').textContent = m.uptime_seconds ? uptime(m.uptime_seconds) : '—';
-
-    // Storage
-    const s = d.storage || {};
-    document.getElementById('storage-used').textContent = (s.disk_used_gb ?? '—') + ' GB';
-    document.getElementById('storage-free').textContent = (s.disk_free_gb ?? '—') + ' GB';
-    document.getElementById('storage-total').textContent = (s.disk_total_gb ?? '—') + ' GB';
-    document.getElementById('storage-pct').textContent = (s.disk_percent ?? '—') + '%';
-    const pct = s.disk_percent || 0;
-    const sb = document.getElementById('storage-bar');
-    sb.style.width = pct + '%';
-    sb.style.background = pct > 90 ? 'linear-gradient(90deg,#ef4444,#dc2626)' :
-      pct > 75 ? 'linear-gradient(90deg,#f59e0b,#d97706)' :
-      'linear-gradient(90deg,#6366f1,#8b5cf6)';
-
-    // Services
-    const services = d.services || [];
-    const running = services.filter(s => s.status === 'running').length;
-    document.getElementById('services-count').textContent = `${running}/${services.length} running`;
-
-    // Populate log dropdown
-    const sel = document.getElementById('log-service');
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">-- wybierz usługę --</option>';
-    services.forEach(svc => {
-      const opt = document.createElement('option');
-      opt.value = svc.name;
-      opt.textContent = svc.name;
-      if (svc.name === prev) opt.selected = true;
-      sel.appendChild(opt);
-    });
-
-    if (services.length === 0) {
-      document.getElementById('services-table').innerHTML =
-        '<div class="px-5 py-8 text-center text-gray-600 text-sm">Brak usług</div>';
-      return;
-    }
-
-    document.getElementById('services-table').innerHTML = services.map(svc => `
-      <div class="service-row px-5 py-3 flex items-center justify-between gap-4 transition-colors">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="w-2 h-2 rounded-full flex-shrink-0 ${svc.status === 'running' ? 'bg-green-500' : 'bg-red-500'}"></div>
-          <div>
-            <div class="font-medium text-sm">${svc.name}</div>
-            <div class="text-xs text-gray-500 truncate max-w-xs">${svc.ports || svc.image || ''}</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-2 flex-shrink-0">
-          <span class="text-xs px-2 py-0.5 rounded-full ${
-            svc.status === 'running'
-              ? 'bg-green-900/40 text-green-400 border border-green-800/50'
-              : 'bg-red-900/40 text-red-400 border border-red-800/50'
-          }">${svc.status}</span>
-          <button onclick="restartService('${svc.name}')"
-            class="text-xs px-2 py-1 rounded bg-indigo-900/40 hover:bg-indigo-900/70 border border-indigo-800/50 text-indigo-300 transition">
-            ↻
-          </button>
-          ${svc.status === 'running' ? `
-          <button onclick="stopService('${svc.name}')"
-            class="text-xs px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/60 border border-red-800/50 text-red-400 transition">
-            ■
-          </button>` : ''}
+function renderServices() {
+  const list = svcFilter === 'all' ? allServices :
+               svcFilter === 'running' ? allServices.filter(s=>s.status==='running') :
+               allServices.filter(s=>s.status!=='running');
+  const el = document.getElementById('svc-table');
+  if(!list.length) { el.innerHTML='<div class="px-5 py-8 text-center text-gray-700 text-sm">Brak usług</div>'; return; }
+  el.innerHTML = list.map(svc => {
+    const isRun = svc.status==='running';
+    const isRestart = svc.status_raw?.includes('Restarting');
+    const badgeCls = isRestart ? 'badge-restart' : isRun ? 'badge-run' : 'badge-stop';
+    const badgeTxt = isRestart ? 'restarting' : svc.status;
+    return `<div class="svc-row px-5 py-3 flex items-center justify-between gap-3 transition-colors">
+      <div class="flex items-center gap-3 min-w-0 flex-1">
+        <div class="w-1.5 h-1.5 rounded-full flex-shrink-0 ${isRun?'bg-green-500':'bg-red-500'} ${isRestart?'pulse':''}"></div>
+        <div class="min-w-0">
+          <div class="text-sm font-medium">${escHtml(svc.name)}</div>
+          <div class="text-xs text-gray-600 truncate">${escHtml(svc.ports||svc.image||'')}</div>
         </div>
       </div>
-    `).join('');
-
-  } catch(e) {
-    console.error(e);
-  }
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <span class="text-xs px-2 py-0.5 rounded-full ${badgeCls}">${badgeTxt}</span>
+        <button onclick="restartSvc('${escHtml(svc.name)}')" class="text-xs px-2 py-1 rounded-lg bg-indigo-950 hover:bg-indigo-900 border border-indigo-900 text-indigo-300 transition" title="Restart">↻</button>
+        ${isRun?`<button onclick="stopSvc('${escHtml(svc.name)}')" class="text-xs px-2 py-1 rounded-lg bg-red-950 hover:bg-red-900 border border-red-900 text-red-400 transition" title="Stop">■</button>`:''}
+      </div>
+    </div>`;
+  }).join('');
 }
 
-async function restartService(name) {
-  toast(`Restarting ${name}...`);
+async function refresh(manual=false) {
   try {
-    const r = await fetch('/api/services/restart', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({service: name})
+    const d = await fetch('/api/status').then(r=>r.json());
+    const statusEl = document.getElementById('status-dot');
+    if(!d.online) {
+      statusEl.innerHTML = '<div class="w-1.5 h-1.5 rounded-full bg-red-500 pulse"></div><span class="text-red-500">offline</span>';
+      document.getElementById('svc-table').innerHTML = '<div class="px-5 py-8 text-center text-red-900 text-sm">Brak połączenia z serwerem</div>';
+      startCountdown(); return;
+    }
+    statusEl.innerHTML = '<div class="w-1.5 h-1.5 rounded-full bg-green-500"></div><span class="text-green-400">online</span>';
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString('pl-PL');
+
+    const m = d.metrics||{};
+    document.getElementById('v-cpu').textContent = (m.cpu_percent??'--')+'%';
+    setBar('b-cpu', m.cpu_percent||0, 'bg-indigo-500');
+    document.getElementById('v-ram').textContent = (m.ram_percent??'--')+'%';
+    document.getElementById('v-ram-detail').textContent = m.ram_used_mb ? `${m.ram_used_mb}/${m.ram_total_mb} MB` : '';
+    setBar('b-ram', m.ram_percent||0, 'bg-violet-500');
+    document.getElementById('v-disk').textContent = (m.disk_percent??'--')+'%';
+    document.getElementById('v-disk-detail').textContent = m.disk_used_gb ? `${m.disk_used_gb}/${m.disk_total_gb} GB` : '';
+    setBar('b-disk', m.disk_percent||0, 'bg-emerald-500');
+    document.getElementById('v-temp').textContent = m.temp_celsius!=null ? m.temp_celsius+'°C' : 'N/A';
+    document.getElementById('v-uptime').textContent = m.uptime_seconds ? 'up '+fmtUptime(m.uptime_seconds) : '';
+
+    allServices = d.services||[];
+    const run = allServices.filter(s=>s.status==='running').length;
+    document.getElementById('svc-count').textContent = `${run}/${allServices.length}`;
+    const sel = document.getElementById('log-sel');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- usluga --</option>';
+    allServices.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s.name; o.textContent = s.name;
+      if(s.name===prev) o.selected=true;
+      sel.appendChild(o);
     });
-    const d = await r.json();
-    d.success ? toast(`${name} restarted`, 'success') : toast(`Error: ${d.error || d.output}`, 'error');
-    setTimeout(refresh, 2000);
-  } catch(e) { toast('Connection error', 'error'); }
+    renderServices();
+
+    const st = d.storage||{};
+    document.getElementById('v-stor-used').textContent = (st.disk_used_gb||'--')+' GB';
+    document.getElementById('v-stor-free').textContent = (st.disk_free_gb||'--')+' GB';
+    document.getElementById('v-stor-total').textContent = (st.disk_total_gb||'--')+' GB';
+    document.getElementById('v-stor-pct').textContent = (st.disk_percent||0)+'%';
+    const sp = document.getElementById('b-stor');
+    const pct = st.disk_percent||0;
+    sp.style.width = pct+'%';
+    sp.style.background = pct>90?'linear-gradient(90deg,#ef4444,#dc2626)':pct>75?'linear-gradient(90deg,#f59e0b,#d97706)':'linear-gradient(90deg,#6366f1,#8b5cf6)';
+  } catch(e) {}
+  loadPihole();
+  startCountdown();
 }
 
-async function stopService(name) {
-  if (!confirm(`Stop ${name}?`)) return;
+async function loadPihole() {
   try {
-    const r = await fetch('/api/services/stop', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({service: name})
-    });
-    const d = await r.json();
-    d.success ? toast(`${name} stopped`, 'success') : toast(`Error: ${d.error}`, 'error');
-    setTimeout(refresh, 2000);
-  } catch(e) { toast('Connection error', 'error'); }
+    const d = await fetch('/api/pihole').then(r=>r.json());
+    const dot = document.getElementById('pihole-status');
+    if(!d.online || d.error) { dot.className='w-1.5 h-1.5 rounded-full bg-red-500'; return; }
+    dot.className='w-1.5 h-1.5 rounded-full bg-green-500';
+    const pct = parseFloat(d.ads_percentage_today||0).toFixed(1);
+    document.getElementById('v-pihole-pct').textContent = pct+'%';
+    document.getElementById('v-pihole-blocked').textContent = fmtNum(d.ads_blocked_today||0)+' zablokowanych';
+    document.getElementById('v-pihole-total').textContent = fmtNum(d.dns_queries_today||0)+' zapytan';
+    document.getElementById('b-pihole').style.width = pct+'%';
+    document.getElementById('v-ph-queries').textContent = fmtNum(d.dns_queries_today||0);
+    document.getElementById('v-ph-blocked').textContent = fmtNum(d.ads_blocked_today||0);
+    document.getElementById('v-ph-domains').textContent = fmtNum(d.domains_being_blocked||0);
+    document.getElementById('pihole-row').style.removeProperty('display');
+  } catch(e) {}
+}
+
+async function restartSvc(name) {
+  toast('Restarting '+name+'...');
+  try {
+    const r = await fetch('/api/services/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:name})}).then(r=>r.json());
+    r.success ? toast(name+' restarted','success') : toast('Error: '+(r.error||r.output),'error');
+    setTimeout(()=>refresh(true), 2500);
+  } catch { toast('Connection error','error'); }
+}
+
+async function stopSvc(name) {
+  if(!confirm('Stop '+name+'?')) return;
+  try {
+    const r = await fetch('/api/services/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:name})}).then(r=>r.json());
+    r.success ? toast(name+' stopped','success') : toast('Error: '+r.error,'error');
+    setTimeout(()=>refresh(true), 2500);
+  } catch { toast('Connection error','error'); }
 }
 
 async function loadLogs() {
-  const svc = document.getElementById('log-service').value;
-  if (!svc) return;
-  const el = document.getElementById('log-output');
-  el.innerHTML = '<div class="text-gray-600 text-xs text-center pt-4">Ładowanie...</div>';
+  const svc = document.getElementById('log-sel').value;
+  if(!svc) return;
+  const el = document.getElementById('log-out');
+  el.innerHTML = '<div class="text-gray-700 text-xs text-center pt-6">Ladowanie...</div>';
   try {
-    const r = await fetch(`/api/logs/${svc}`);
-    const d = await r.json();
-    const lines = d.logs || [];
+    const d = await fetch('/api/logs/'+svc).then(r=>r.json());
+    const lines = d.logs||[];
     el.innerHTML = lines.filter(Boolean).map(l => {
-      const cls = l.includes('ERROR') || l.includes('error') ? 'text-red-400' :
-                  l.includes('WARN') || l.includes('warn') ? 'text-yellow-400' :
-                  l.includes('INFO') ? 'text-gray-400' : 'text-gray-500';
-      return `<div class="log-line ${cls} py-0.5 border-b border-gray-800/30">${escHtml(l)}</div>`;
-    }).join('') || '<div class="text-gray-600 text-xs text-center pt-4">Brak logów</div>';
+      const cls = /error/i.test(l)?'text-red-400':/warn/i.test(l)?'text-yellow-500':/info/i.test(l)?'text-gray-400':'text-gray-600';
+      return `<div class="log-line ${cls} py-0.5">${escHtml(l)}</div>`;
+    }).join('') || '<div class="text-gray-700 text-xs text-center pt-6">Brak logów</div>';
     el.scrollTop = el.scrollHeight;
-  } catch(e) {
-    el.innerHTML = '<div class="text-red-500 text-xs text-center pt-4">Błąd ładowania logów</div>';
-  }
+  } catch { el.innerHTML='<div class="text-red-900 text-xs text-center pt-6">Blad ladowania</div>'; }
 }
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// Init
-loadConfig().then(() => {
-  refresh();
-  setInterval(refresh, 10000);
-});
+loadConfig().then(()=>refresh(true));
 </script>
 </body>
 </html>

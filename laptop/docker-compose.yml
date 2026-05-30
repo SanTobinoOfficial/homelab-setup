@@ -1,4 +1,4 @@
-version: "3.9"
+﻿version: "3.9"
 
 networks:
   homelab:
@@ -6,9 +6,9 @@ networks:
 
 services:
 
-  # ─────────────────────────────────────
-  # TRAEFIK — Reverse Proxy + Auth middleware
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # TRAEFIK â€” Reverse Proxy + Auth middleware
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   traefik:
     image: traefik:v3.0
     container_name: traefik
@@ -30,11 +30,11 @@ services:
     networks:
       - homelab
 
-  # ─────────────────────────────────────
-  # AUTHELIA — Authentication + Role-based access
-  # Chroni wrażliwe usługi (Portainer, Traefik) za logowaniem
-  # Użytkownicy i grupy konfigurowane w users_database.yml
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # AUTHELIA â€” Authentication + Role-based access
+  # Chroni wraĹĽliwe usĹ‚ugi (Portainer, Traefik) za logowaniem
+  # UĹĽytkownicy i grupy konfigurowane w users_database.yml
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   authelia:
     image: authelia/authelia:latest
     container_name: authelia
@@ -55,11 +55,11 @@ services:
       - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
       - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
 
-  # ─────────────────────────────────────
-  # HEIMDALL — Dashboard użytkownika (zamiast custom portalu)
-  # Każdy użytkownik ma swój zestaw zakładek/skrótów
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # HEIMDALL â€” Dashboard uĹĽytkownika (zamiast custom portalu)
+  # KaĹĽdy uĹĽytkownik ma swĂłj zestaw zakĹ‚adek/skrĂłtĂłw
   # http://<laptop>:8888
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   heimdall:
     image: lscr.io/linuxserver/heimdall:latest
     container_name: heimdall
@@ -79,12 +79,12 @@ services:
       - "traefik.http.routers.heimdall.rule=Host(`portal.homelab.local`)"
       - "traefik.http.services.heimdall.loadbalancer.server.port=80"
 
-  # ─────────────────────────────────────
-  # PI-HOLE — DNS + DHCP + Ad blocking
-  # Zastępuje AdGuard. Pi-hole v6 obsługuje profile per-klient (po MAC).
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # PI-HOLE â€” DNS + DHCP + Ad blocking
+  # ZastÄ™puje AdGuard. Pi-hole v6 obsĹ‚uguje profile per-klient (po MAC).
   # Web UI: http://<laptop>:8053/admin
   # DNS: port 53 | DHCP: port 67
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   pihole:
     image: pihole/pihole:latest
     container_name: pihole
@@ -94,7 +94,7 @@ services:
       WEBPASSWORD: ${PIHOLE_PASSWORD}
       PIHOLE_DNS_: "8.8.8.8;1.1.1.1"
       DNSMASQ_LISTENING: all
-      # DHCP (opcjonalne — włącz jeśli chcesz Pi-hole jako DHCP serwer)
+      # DHCP (opcjonalne â€” wĹ‚Ä…cz jeĹ›li chcesz Pi-hole jako DHCP serwer)
       # DHCP_ACTIVE: "true"
       # DHCP_START: "192.168.1.50"
       # DHCP_END: "192.168.1.200"
@@ -106,15 +106,15 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
       - "67:67/udp"   # DHCP
-      - "8053:80"     # Web UI na 8053 żeby nie kolidować z Traefik
+      - "8053:80"     # Web UI na 8053 ĹĽeby nie kolidowaÄ‡ z Traefik
     networks:
       - homelab
     cap_add:
       - NET_ADMIN
 
-  # ─────────────────────────────────────
-  # MARIADB — baza danych Nextcloud
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # MARIADB â€” baza danych Nextcloud
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   nextcloud-db:
     image: mariadb:10.11
     container_name: nextcloud-db
@@ -134,9 +134,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─────────────────────────────────────
-  # NEXTCLOUD — NAS / Cloud / User files
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # NEXTCLOUD â€” NAS / Cloud / User files
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   nextcloud:
     image: nextcloud:28-apache
     container_name: nextcloud
@@ -151,7 +151,7 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD}
       NEXTCLOUD_ADMIN_USER: admin
       NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
-      NEXTCLOUD_TRUSTED_DOMAINS: "192.168.1.100 localhost nextcloud.local"
+      NEXTCLOUD_TRUSTED_DOMAINS: "192.168.1.40 192.168.1.100 localhost nextcloud.local"
       OVERWRITEPROTOCOL: http
     volumes:
       - /mnt/ssd/docker/nextcloud/data:/var/www/html
@@ -165,9 +165,9 @@ services:
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.local`)"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
 
-  # ─────────────────────────────────────
-  # JELLYFIN — Media Server
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JELLYFIN â€” Media Server
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   jellyfin:
     image: jellyfin/jellyfin:latest
     container_name: jellyfin
@@ -187,9 +187,9 @@ services:
       - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.local`)"
       - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"
 
-  # ─────────────────────────────────────
-  # PORTAINER — Docker Management
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # PORTAINER â€” Docker Management
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   portainer:
     image: portainer/portainer-ce:latest
     container_name: portainer
@@ -202,9 +202,9 @@ services:
     networks:
       - homelab
 
-  # ─────────────────────────────────────
-  # NODE AGENT — REST API dla Admin Dashboard na PC
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # NODE AGENT â€” REST API dla Admin Dashboard na PC
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   node-agent:
     image: python:3.11-slim
     container_name: node-agent
@@ -222,19 +222,18 @@ services:
     networks:
       - homelab
 
-  # ─────────────────────────────────────
-  # DISCORD BOT — kontrola przez Discord
-  # ─────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # DISCORD BOT â€” kontrola przez Discord
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   discord-bot:
     image: node:20-slim
     container_name: homelab-discord-bot
     restart: unless-stopped
     working_dir: /app
-    volumes:
+        volumes:
       - /opt/homelab/discord-bot:/app
-      - /usr/local/bin/claude:/usr/local/bin/claude:ro
       - /root/.claude:/root/.claude:ro
-    command: sh -c "npm install --omit=dev && node bot.js"
+    command: sh -c "npm install --omit=dev && npm install -g @anthropic-ai/claude-code 2>/dev/null; node bot.js"
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       ALLOWED_CHANNEL_ID: ${ALLOWED_CHANNEL_ID}
