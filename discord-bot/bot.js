@@ -134,8 +134,7 @@ function startRemoteSession(thread, initialMessage, session) {
     const proc = spawn(CLAUDE_CLI, [
       "--remote-control",
       "--output-format", "stream-json",
-      "--dangerously-skip-permissions",
-    ], { cwd: "/opt/homelab" });
+    ], { cwd: "/opt/homelab", stdio: ["pipe", "pipe", "pipe"] });
 
     session.proc = proc;
     session.mode = "remote";
@@ -247,8 +246,8 @@ function runClaudePrint(fullPrompt, session) {
     let buffer = "", errOut = "";
 
     const proc = spawn(CLAUDE_CLI, [
-      "--print", "--output-format", "stream-json", "--dangerously-skip-permissions", fullPrompt,
-    ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT });
+      "--print", "--output-format", "stream-json", fullPrompt,
+    ], { cwd: "/opt/homelab", timeout: CLAUDE_TIMEOUT, stdio: ["ignore", "pipe", "pipe"] });
 
     session.proc = proc;
 
