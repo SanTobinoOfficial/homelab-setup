@@ -248,18 +248,27 @@ services:
       - homelab
 
   # ─────────────────────────────────────
-  # TTYD — Web Terminal (SSH konsola z przeglądarki)
+  # TTYD — Web Terminal z dostępem do claude CLI
   # http://<laptop>:7681
   # ─────────────────────────────────────
   ttyd:
     image: tsl0922/ttyd:latest
     container_name: ttyd
     restart: unless-stopped
-    command: ttyd -p 7681 -t fontSize=14 -t theme={"background":"#0a0c12","foreground":"#e5e7eb"} login
+    command: ttyd -p 7681 -t fontSize=14 -t disableReconnect=false bash
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/homelab:/opt/homelab
       - /mnt/ssd:/mnt/ssd
+      - /usr/local/bin:/usr/local/bin:ro
+      - /usr/local/lib:/usr/local/lib:ro
+      - /usr/bin:/usr/bin:ro
+      - /usr/lib:/usr/lib:ro
+      - /home/homelab:/root
+      - /home/homelab/.claude:/root/.claude
+    environment:
+      HOME: /root
+      PATH: /usr/local/bin:/usr/bin:/bin
     ports:
       - "7681:7681"
     networks:
